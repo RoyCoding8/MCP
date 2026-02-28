@@ -245,25 +245,106 @@ button.rf-tool-btn:hover {
     box-shadow: 0 2px 8px rgba(66, 133, 244, 0.1) !important;
 }
 
-/* ── Thinking blocks ── */
+/* ── Thinking blocks (modern LLM style) ── */
 details.thinking {
-    background: var(--rf-surface-dim);
-    border: 1px solid var(--rf-border);
-    border-radius: 12px;
-    padding: 8px 16px;
-    margin: 8px 0;
+    border: none;
+    border-left: 3px solid var(--rf-border);
+    border-radius: 0;
+    padding: 0 0 0 16px;
+    margin: 12px 0;
+    background: transparent;
+    transition: border-color 0.3s;
 }
 details.thinking summary {
     cursor: pointer;
     font-size: 13px;
+    font-weight: 500;
     color: var(--rf-text-sec);
+    padding: 4px 0;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    user-select: none;
 }
-details.thinking p {
-    font-size: 12px;
-    font-style: italic;
+details.thinking summary::-webkit-details-marker { display: none; }
+details.thinking summary::after {
+    content: '▸';
+    font-size: 11px;
     color: var(--rf-text-sec);
-    line-height: 1.5;
-    margin: 6px 0;
+    margin-left: 4px;
+    transition: transform 0.2s;
+}
+details.thinking[open] summary::after {
+    transform: rotate(90deg);
+}
+
+/* Icon */
+.think-icon {
+    font-size: 14px;
+    line-height: 1;
+}
+
+/* Body */
+.think-body {
+    font-size: 13px;
+    color: var(--rf-text-sec);
+    line-height: 1.6;
+    padding: 4px 0 8px 0;
+    max-height: 400px;
+    overflow-y: auto;
+}
+.think-body p {
+    font-size: 13px;
+    color: var(--rf-text-sec);
+    line-height: 1.6;
+    margin: 4px 0;
+}
+
+/* ── Live (streaming) state ── */
+details.thinking-live {
+    border-left-color: var(--rf-primary);
+    animation: think-border-pulse 2s ease-in-out infinite;
+}
+details.thinking-live summary {
+    color: var(--rf-primary);
+}
+details.thinking-live summary::after {
+    color: var(--rf-primary);  /* match the live theme color */
+}
+.think-label {
+    font-weight: 600;
+}
+.think-dots {
+    display: inline-flex;
+    gap: 1px;
+    margin-left: 1px;
+}
+.think-dots span {
+    animation: dot-blink 1.4s infinite both;
+    opacity: 0;
+    font-weight: 600;
+    color: var(--rf-primary);
+}
+.think-dots span:nth-child(1) { animation-delay: 0s; }
+.think-dots span:nth-child(2) { animation-delay: 0.2s; }
+.think-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes think-border-pulse {
+    0%, 100% { border-left-color: var(--rf-primary); }
+    50% { border-left-color: var(--rf-accent); }
+}
+
+/* ── Done (completed) state ── */
+details.thinking-done {
+    border-left-color: var(--rf-border);
+}
+details.thinking-done summary {
+    color: var(--rf-text-sec);
+    opacity: 0.8;
+}
+details.thinking-done summary:hover {
+    opacity: 1;
 }
 
 /* ── Tool call blocks ── */

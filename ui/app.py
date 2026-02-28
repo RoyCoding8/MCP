@@ -126,7 +126,7 @@ def _llm_request(messages, tools, model, url, stream=False):
     """Send a chat request to Ollama. Returns parsed JSON or raw response for streaming."""
     import urllib.request, urllib.error
 
-    payload = {"model": model, "messages": messages, "stream": stream}
+    payload = {"model": model, "messages": messages, "stream": stream, "think": True}
     if tools:
         payload["tools"] = tools
 
@@ -148,14 +148,20 @@ def _llm_request(messages, tools, model, url, stream=False):
 
 
 def _iter_stream(resp):
-    """Yield (token, tool_calls, done, msg) from a streaming Ollama response."""
+    """Yield (token, thinking_token, tool_calls, done, msg) from a streaming Ollama response."""
     for raw_line in resp:
         line = raw_line.decode("utf-8", errors="replace").strip()
         if not line:
             continue
         chunk = json.loads(line)
         msg = chunk.get("message", {})
-        yield msg.get("content", ""), msg.get("tool_calls", []), chunk.get("done", False), msg
+        yield (
+            msg.get("content", ""),
+            msg.get("thinking", ""),
+            msg.get("tool_calls", []),
+            chunk.get("done", False),
+            msg,
+        )
         if chunk.get("done"):
             break
 
@@ -212,21 +218,42 @@ def respond(message, history, expert_name, model_name, endpoint_url):
             return
 
         full_content = ""
+        full_thinking = ""
         all_tool_calls = []
         last_msg = {}
 
         try:
-            for token, tool_calls, done, msg_chunk in _iter_stream(resp):
+            for token, thinking_token, tool_calls, done, msg_chunk in _iter_stream(resp):
                 if tool_calls:
                     all_tool_calls.extend(tool_calls)
+                changed = False
+                if thinking_token:
+                    full_thinking += thinking_token
+                    changed = True
                 if token:
                     full_content += token
-                    yield _chat_list(history, message, accumulated + "\n\n" + _clean_response(full_content))
+                    changed = True
+                if changed:
+                    # Build the display: wrap thinking in <think> tags so _clean_response renders it
+                    display = ""
+                    if full_thinking:
+                        display += "<think>" + full_thinking
+                        # Only close the tag if we've started getting content (thinking is done)
+                        if full_content:
+                            display += "</think>"
+                    display += full_content
+                    yield _chat_list(history, message, accumulated + "\n\n" + _clean_response(display))
                 last_msg = msg_chunk
         finally:
             resp.close()
 
-        accumulated += "\n\n" + _clean_response(full_content)
+        # Build final text for this round
+        final_display = ""
+        if full_thinking:
+            final_display += "<think>" + full_thinking + "</think>"
+        final_display += full_content
+
+        accumulated += "\n\n" + _clean_response(final_display)
         yield _chat_list(history, message, accumulated)
 
         # If the model didn't call any tools, it's done reasoning and has provided the final answer!
@@ -302,26 +329,32 @@ def _to_str(content):
 
 def _clean_response(text):
     """Collapse <think> blocks into styled, collapsible details.
-    Forces the block open while streaming, then closes it when complete.
+    Streaming (unclosed): always open with animated indicator.
+    Complete (closed): collapsed, user can click to expand.
     """
     def _replace_closed(m):
         thought = m.group(1).strip()
         if not thought:
             return ""
+        # Count approximate lines for the summary label
+        lines = len(thought.split('\n'))
+        label = f"Thought process ({lines} lines)"
         return (
-            '\n<details class="thinking"><summary>Thinking...</summary>\n'
-            f'\n{thought}\n</details>\n\n'
+            f'\n<details class="thinking thinking-done"><summary>'
+            f'{label}</summary>'
+            f'\n<div class="think-body">\n\n{thought}\n\n</div></details>\n\n'
         )
 
     def _replace_open(m):
         thought = m.group(1).strip()
         if not thought:
             return ""
-        # The 'open' attribute keeps it expanded while streaming.
-        # Gradio redraws the DOM on every token, so manual clicks would be overwritten.
         return (
-            '\n<details class="thinking" open><summary>Thinking...</summary>\n'
-            f'\n{thought}\n</details>\n\n'
+            '\n<details class="thinking thinking-live"><summary>'
+            '<span class="think-label">Thinking</span>'
+            '<span class="think-dots"><span>.</span><span>.</span><span>.</span></span>'
+            '</summary>'
+            f'\n<div class="think-body">\n\n{thought}\n\n</div></details>\n\n'
         )
 
     text = re.sub(r'<think>(.*?)</think>', _replace_closed, text, flags=re.DOTALL)
