@@ -7,6 +7,7 @@ import inspect
 import json
 import pathlib
 import re
+import threading
 import typing
 import gradio as gr
 from experts.math.tools.algebra import math_tool, OPERATIONS as MATH_OPS, DOMAINS
@@ -147,9 +148,11 @@ def _llm_request(messages, tools, model, url, stream=False):
         raise ConnectionError(f"Request to {url} timed out (300s).")
 
 
-def _iter_stream(resp):
+def _iter_stream(resp, stop_event=None):
     """Yield (token, tool_calls, done, msg) from a streaming Ollama response."""
     for raw_line in resp:
+        if stop_event and stop_event.is_set():
+            break
         line = raw_line.decode("utf-8", errors="replace").strip()
         if not line:
             continue
@@ -171,7 +174,7 @@ def _chat_list(history, message, accumulated):
 LOADING_DOTS = '<span class="loading-dots">Thinking<span>.</span><span>.</span><span>.</span></span>'
 
 
-def respond(message, history, expert_name, model_name, endpoint_url):
+def respond(message, history, expert_name, model_name, endpoint_url, stop_event=None):
     """Two-phase chat handler: Compute → Present.
 
     Phase 1 (COMPUTE): /no_think, tools ON.  Model calls tools.
@@ -201,6 +204,11 @@ def respond(message, history, expert_name, model_name, endpoint_url):
     accumulated = ""
 
     for round_num in range(MAX_ROUNDS):
+        if stop_event and stop_event.is_set():
+            accumulated += "\n\n*— Generation stopped.*"
+            yield _chat_list(history, message, accumulated)
+            return
+
         # We start streaming the model's thought process / answer immediately
         yield _chat_list(history, message, accumulated + "\n\n" + LOADING_DOTS)
 
@@ -214,9 +222,10 @@ def respond(message, history, expert_name, model_name, endpoint_url):
         full_content = ""
         all_tool_calls = []
         last_msg = {}
+        stopped = False
 
         try:
-            for token, tool_calls, done, msg_chunk in _iter_stream(resp):
+            for token, tool_calls, done, msg_chunk in _iter_stream(resp, stop_event):
                 if tool_calls:
                     all_tool_calls.extend(tool_calls)
                 if token:
@@ -225,6 +234,14 @@ def respond(message, history, expert_name, model_name, endpoint_url):
                 last_msg = msg_chunk
         finally:
             resp.close()
+            if stop_event and stop_event.is_set():
+                stopped = True
+
+        if stopped:
+            accumulated += "\n\n" + _clean_response(full_content)
+            accumulated += "\n\n*— Generation stopped.*"
+            yield _chat_list(history, message, accumulated)
+            return
 
         accumulated += "\n\n" + _clean_response(full_content)
         yield _chat_list(history, message, accumulated)
@@ -408,25 +425,39 @@ def build_ui():
             chat_history.append({"role": "user", "content": message})
             return "", chat_history
 
-        def bot_respond(chat_history, expert_name, model_name, endpoint_url):
+        # --- Stop signal (shared mutable state per session) ---
+        stop_signal = gr.State(None)  # will hold a threading.Event
+
+        def _get_or_create_event(ev):
+            """Ensure we have a threading.Event for this session."""
+            if ev is None:
+                ev = threading.Event()
+            return ev
+
+        def bot_respond(chat_history, expert_name, model_name, endpoint_url, stop_ev):
+            # Ensure we have a stop event
+            if stop_ev is None:
+                stop_ev = threading.Event()
+            stop_ev.clear()  # reset for this generation
+
             if not chat_history:
-                return chat_history
+                return
             user_msg = chat_history[-1]["content"]
             prev = chat_history[:-1]
             try:
-                for updated in respond(user_msg, prev, expert_name, model_name, endpoint_url):
+                for updated in respond(user_msg, prev, expert_name, model_name, endpoint_url, stop_event=stop_ev):
                     yield updated
             except Exception as e:
                 # Catch any generator exceptions so the UI doesn't silently freeze
                 chat_history.append({"role": "assistant", "content": f"**Fatal Error:** {e}"})
                 yield chat_history
 
-        # --- Generation state ---
-        gen_state = gr.State(False)  # True while generating
-
-        def pre_gen():
-            """Hide send, show stop."""
-            return gr.update(visible=False), gr.update(visible=True)
+        def pre_gen(stop_ev):
+            """Hide send, show stop.  Reset the stop signal."""
+            if stop_ev is None:
+                stop_ev = threading.Event()
+            stop_ev.clear()
+            return gr.update(visible=False), gr.update(visible=True), stop_ev
 
         def post_gen(text):
             """Hide stop, show send."""
@@ -436,6 +467,13 @@ def build_ui():
                 gr.update(visible=False),
             )
 
+        def do_stop(stop_ev):
+            """Set the stop flag so the generator breaks out of streaming."""
+            if stop_ev is None:
+                stop_ev = threading.Event()
+            stop_ev.set()
+            return stop_ev
+
         # --- Submission chains ---
 
         # 1. Textbox Enter
@@ -443,10 +481,10 @@ def build_ui():
             user_submit, [msg, chatbot], [msg, chatbot], queue=False
         )
         pre_gen_ev = user_sub_ev.then(
-            pre_gen, None, [send_btn, stop_btn], queue=False
+            pre_gen, [stop_signal], [send_btn, stop_btn, stop_signal], queue=False
         )
         bot_res_ev = pre_gen_ev.then(
-            bot_respond, [chatbot, expert_dd, model_tb, url_tb], chatbot
+            bot_respond, [chatbot, expert_dd, model_tb, url_tb, stop_signal], chatbot
         )
         bot_res_ev.then(
             post_gen, msg, [send_btn, stop_btn], queue=False
@@ -457,22 +495,23 @@ def build_ui():
             user_submit, [msg, chatbot], [msg, chatbot], queue=False
         )
         btn_pre_ev = btn_sub_ev.then(
-            pre_gen, None, [send_btn, stop_btn], queue=False
+            pre_gen, [stop_signal], [send_btn, stop_btn, stop_signal], queue=False
         )
         btn_res_ev = btn_pre_ev.then(
-            bot_respond, [chatbot, expert_dd, model_tb, url_tb], chatbot
+            bot_respond, [chatbot, expert_dd, model_tb, url_tb, stop_signal], chatbot
         )
         btn_res_ev.then(
             post_gen, msg, [send_btn, stop_btn], queue=False
         )
 
-        # 3. Stop Button — cancel generation AND restore buttons in one handler
+        # 3. Stop Button — set the stop signal + restore buttons immediately via JS
         stop_btn.click(
-            fn=post_gen,
-            inputs=msg,
-            outputs=[send_btn, stop_btn],
-            cancels=[bot_res_ev, btn_res_ev],
+            fn=do_stop,
+            inputs=[stop_signal],
+            outputs=[stop_signal],
             queue=False,
+        ).then(
+            post_gen, msg, [send_btn, stop_btn], queue=False
         )
 
     return app
