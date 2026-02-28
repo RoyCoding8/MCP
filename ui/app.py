@@ -383,7 +383,7 @@ def build_ui():
 
         with gr.Row(elem_id="rf-toolbar"):
             clear_btn = gr.Button("🗑 Clear Chat", elem_id="rf-clear-btn", elem_classes=["rf-tool-btn"], scale=1)
-            flush_btn = gr.Button("⚡ Flush KV Cache", elem_id="rf-flush-btn", elem_classes=["rf-tool-btn"], scale=1)
+            flush_btn = gr.Button(" Flush KV Cache", elem_id="rf-flush-btn", elem_classes=["rf-tool-btn"], scale=1)
 
         gr.Examples(
             examples=[
