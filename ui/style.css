@@ -196,14 +196,30 @@ button.rf-action-btn:active {
     color: #000000 !important;
 }
 
-/* Stop button */
-#rf-stop-btn {
-    background: var(--rf-text) !important; /* solid filled contextually */
-    font-size: 12px !important;
+/* ── Toolbar (Clear / Flush) ── */
+#rf-toolbar {
+    display: flex !important;
+    gap: 8px !important;
+    justify-content: center !important;
+    margin-top: 8px !important;
 }
-.dark #rf-stop-btn {
-    background: #ffffff !important;
-    color: #000000 !important;
+button.rf-tool-btn {
+    border: 1px solid var(--rf-border) !important;
+    border-radius: 20px !important;
+    padding: 6px 16px !important;
+    font-size: 13px !important;
+    background: var(--rf-surface-dim) !important;
+    color: var(--rf-text-sec) !important;
+    cursor: pointer !important;
+    transition: all 0.2s !important;
+    box-shadow: none !important;
+    min-width: auto !important;
+}
+button.rf-tool-btn:hover {
+    border-color: var(--rf-primary) !important;
+    color: var(--rf-primary) !important;
+    background: var(--rf-surface) !important;
+    box-shadow: 0 2px 8px rgba(66, 133, 244, 0.1) !important;
 }
 
 /* ── Settings accordion ── */
