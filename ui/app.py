@@ -402,20 +402,20 @@ def build_ui():
                 chat_history.append({"role": "assistant", "content": f"**Fatal Error:** {e}"})
                 yield chat_history
 
-        # Hide play, show stop
+        # --- Generation state ---
+        gen_state = gr.State(False)  # True while generating
+
         def pre_gen():
-            return [
-                gr.update(visible=False), 
-                gr.update(visible=True)
-            ]
-        
-        # Hide stop, return play (purely visual update)
+            """Hide send, show stop."""
+            return gr.update(visible=False), gr.update(visible=True)
+
         def post_gen(text):
+            """Hide stop, show send."""
             is_valid = bool(text and text.strip())
-            return [
-                gr.update(visible=True, elem_classes=["rf-action-btn", "rf-active" if is_valid else "rf-inactive"]), 
-                gr.update(visible=False)
-            ]
+            return (
+                gr.update(visible=True, elem_classes=["rf-action-btn", "rf-active" if is_valid else "rf-inactive"]),
+                gr.update(visible=False),
+            )
 
         # --- Submission chains ---
 
@@ -433,7 +433,7 @@ def build_ui():
             post_gen, msg, [send_btn, stop_btn], queue=False
         )
 
-        # 2. Play Button Click
+        # 2. Send Button Click
         btn_sub_ev = send_btn.click(
             user_submit, [msg, chatbot], [msg, chatbot], queue=False
         )
@@ -447,9 +447,13 @@ def build_ui():
             post_gen, msg, [send_btn, stop_btn], queue=False
         )
 
-        # 3. Stop Button Click
+        # 3. Stop Button — cancel generation, then restore buttons
         stop_btn.click(
-            post_gen, msg, [send_btn, stop_btn], queue=False, cancels=[bot_res_ev, btn_res_ev]
+            fn=None, inputs=None, outputs=None,
+            cancels=[bot_res_ev, btn_res_ev],
+        )
+        stop_btn.click(
+            post_gen, msg, [send_btn, stop_btn], queue=False
         )
 
     return app
