@@ -1,0 +1,276 @@
+/* ReasonForge — Custom Styles */
+
+:root {
+    --rf-primary: #1a73e8;
+    --rf-primary-dark: #1557b0;
+    --rf-accent: #669df6;
+    --rf-surface: #ffffff;
+    --rf-surface-dim: #f1f3f4;
+    --rf-surface-glass: rgba(255, 255, 255, 0.75);
+    --rf-text: #202124;
+    --rf-text-sec: #5f6368;
+    --rf-border: #e0e0e0;
+    --rf-radius: 16px;
+    --rf-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    --rf-gradient: linear-gradient(135deg, #1a73e8, #669df6);
+}
+.dark {
+    --rf-primary: #8ab4f8;
+    --rf-primary-dark: #aecbfa;
+    --rf-accent: #aecbfa;
+    --rf-surface: #1a1a2e;
+    --rf-surface-dim: #16213e;
+    --rf-surface-glass: rgba(26, 26, 46, 0.8);
+    --rf-text: #e8eaed;
+    --rf-text-sec: #9aa0a6;
+    --rf-border: #2d2d44;
+    --rf-shadow: 0 2px 12px rgba(0,0,0,0.3);
+    --rf-gradient: linear-gradient(135deg, #8ab4f8, #aecbfa);
+}
+
+/* ── Layout ── */
+.gradio-container {
+    max-width: 1200px !important;
+    margin: 0 auto !important;
+    font-family: 'Google Sans', 'Inter', 'Segoe UI', Roboto, sans-serif !important;
+    padding: 0 24px !important;
+}
+
+/* ── Header ── */
+#rf-header-row {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    position: relative !important;
+    padding: 24px 0 12px !important;
+}
+#rf-header {
+    text-align: center;
+    margin: 0 !important;
+}
+#rf-header h1 {
+    background: var(--rf-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-size: 2.2rem;
+    font-weight: 700;
+    margin-bottom: 4px;
+}
+#rf-header p {
+    color: var(--rf-text-sec);
+    font-size: 15px;
+    margin: 0;
+}
+#rf-theme-toggle {
+    position: absolute !important;
+    right: 0 !important;
+    top: 24px !important;
+    background: var(--rf-surface-dim) !important;
+    border: 1px solid var(--rf-border) !important;
+    border-radius: 50% !important;
+    width: 44px !important;
+    height: 44px !important;
+    font-size: 20px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    cursor: pointer !important;
+    transition: transform 0.2s, background 0.2s !important;
+    box-shadow: var(--rf-shadow) !important;
+    color: var(--rf-text) !important;
+}
+#rf-theme-toggle:hover {
+    transform: scale(1.1) !important;
+    background: var(--rf-surface) !important;
+}
+
+/* ── Chatbot ── */
+.chatbot {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+.message {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    font-size: 15px !important;
+    line-height: 1.65 !important;
+}
+/* User bubble */
+.message.user {
+    background: var(--rf-surface-dim) !important;
+    border-radius: 20px !important;
+    padding: 12px 18px !important;
+    align-self: flex-end !important;
+}
+/* Assistant bubble */
+.message.bot {
+    background: transparent !important;
+    padding: 12px 0 !important;
+    align-self: flex-start !important;
+}
+
+/* ── Input Pill ── */
+#rf-input-pill {
+    background: var(--rf-surface-dim) !important;
+    border: 1px solid var(--rf-border) !important;
+    border-radius: 26px !important;
+    padding: 4px 8px 4px 20px !important;
+    display: flex !important;
+    align-items: flex-end !important;
+    box-shadow: none !important;
+    margin-top: 12px !important;
+    transition: box-shadow 0.2s !important;
+}
+#rf-input-pill:focus-within {
+    box-shadow: 0 0 0 2px var(--rf-primary) !important;
+}
+#rf-msg-box {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    width: 100% !important;
+}
+#rf-msg-box textarea {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    font-size: 15px !important;
+    padding: 10px 0 !important;
+}
+
+/* ── Buttons (ChatGPT style) ── */
+#rf-btn-container {
+    position: relative !important;
+    width: 36px !important;
+    height: 36px !important;
+    flex-shrink: 0 !important;
+    margin-bottom: 6px !important;
+}
+button.rf-action-btn {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 36px !important;
+    height: 36px !important;
+    min-width: 36px !important;
+    border-radius: 50% !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border: none !important;
+    color: white !important;
+    cursor: pointer !important;
+    transition: transform 0.1s, opacity 0.2s, background 0.2s !important;
+    box-shadow: none !important;
+}
+button.rf-action-btn:active {
+    transform: scale(0.9) !important;
+}
+
+/* Base style for send button */
+#rf-send-btn {
+    font-size: 16px !important;
+}
+
+/* Inactive (empty textbox) */
+#rf-send-btn.rf-inactive {
+    background: #d1d5db !important;
+    color: #ffffff !important;
+}
+.dark #rf-send-btn.rf-inactive {
+    background: #3f3f46 !important;
+    color: #a1a1aa !important;
+}
+
+/* Active (textbox has text) */
+#rf-send-btn.rf-active {
+    background: #000000 !important;
+    color: #ffffff !important;
+}
+.dark #rf-send-btn.rf-active {
+    background: #ffffff !important;
+    color: #000000 !important;
+}
+
+/* Stop button */
+#rf-stop-btn {
+    background: var(--rf-text) !important; /* solid filled contextually */
+    font-size: 12px !important;
+}
+.dark #rf-stop-btn {
+    background: #ffffff !important;
+    color: #000000 !important;
+}
+
+/* ── Settings accordion ── */
+.accordion {
+    border: 1px solid var(--rf-border) !important;
+    border-radius: var(--rf-radius) !important;
+    margin-bottom: 12px !important;
+}
+
+/* ── Examples ── */
+.examples-holder button {
+    border: 1px solid var(--rf-border) !important;
+    border-radius: 20px !important;
+    padding: 6px 16px !important;
+    font-size: 13px !important;
+    background: var(--rf-surface-dim) !important;
+    color: var(--rf-text) !important;
+    transition: all 0.2s !important;
+}
+.examples-holder button:hover {
+    border-color: var(--rf-primary) !important;
+    background: var(--rf-surface) !important;
+    box-shadow: 0 2px 8px rgba(66, 133, 244, 0.1) !important;
+}
+
+/* ── Thinking blocks ── */
+details.thinking {
+    background: var(--rf-surface-dim);
+    border: 1px solid var(--rf-border);
+    border-radius: 12px;
+    padding: 8px 16px;
+    margin: 8px 0;
+}
+details.thinking summary {
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--rf-text-sec);
+}
+details.thinking p {
+    font-size: 12px;
+    font-style: italic;
+    color: var(--rf-text-sec);
+    line-height: 1.5;
+    margin: 6px 0;
+}
+
+/* ── Tool call blocks ── */
+details summary code {
+    background: var(--rf-surface-dim);
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+/* ── Loading dots ── */
+.loading-dots {
+    color: var(--rf-text-sec);
+    font-size: 14px;
+}
+.loading-dots span {
+    animation: dot-blink 1.4s infinite both;
+    opacity: 0;
+}
+.loading-dots span:nth-child(1) { animation-delay: 0s; }
+.loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+.loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes dot-blink {
+    0%, 80%, 100% { opacity: 0; }
+    40% { opacity: 1; }
+}

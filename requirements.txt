@@ -1,0 +1,4 @@
+gradio>=5.0
+mcp[cli]>=1.26.0
+sympy>=1.14.0
+tiktoken>=0.12.0
