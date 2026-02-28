@@ -13,10 +13,11 @@ from experts.math.tools.algebra import math_tool, OPERATIONS as MATH_OPS, DOMAIN
 from experts.math.tools.calculus import calculus_tool, OPERATIONS as CALC_OPS
 from experts.math.tools.matrix import matrix_tool, OPERATIONS as MAT_OPS
 from experts.math.tools.statistics import statistics_tool, OPERATIONS as STAT_OPS
+from experts.code.tools.code import code_tool, OPERATIONS as CODE_OPS
 
 # -- Config --
 
-DEFAULT_MODEL = "qwen3:8b"
+DEFAULT_MODEL = "qwen3:32b"
 DEFAULT_URL = "http://localhost:11434/api/chat"
 MAX_ROUNDS = 5
 
@@ -41,6 +42,7 @@ TOOL_ENUMS = {
     "calculus_tool": {"operation": sorted(CALC_OPS)},
     "matrix_tool": {"operation": sorted(MAT_OPS)},
     "statistics_tool": {"operation": sorted(STAT_OPS)},
+    "code_tool": {"operation": sorted(CODE_OPS)},
 }
 
 
@@ -84,6 +86,7 @@ def _build_schema(fn, enums=None):
 # -- Expert definitions --
 
 _MATH_TOOLS = [math_tool, calculus_tool, matrix_tool, statistics_tool]
+_CODE_TOOLS = [code_tool]
 
 EXPERTS = {
     "Mathematician": {
@@ -97,6 +100,22 @@ EXPERTS = {
             for fn in _MATH_TOOLS
         ],
         "dispatch": {fn.__name__: fn for fn in _MATH_TOOLS},
+    },
+    "Coder": {
+        "system": (
+            "You are a precise coding assistant. "
+            "You have access to code_tool — a sandboxed Python execution environment. "
+            "ALWAYS use code_tool — NEVER guess output or run code in your head.\n"
+            "Use code_tool with operation='check' to verify syntax before running.\n"
+            "Use code_tool with operation='run' to execute and get actual output.\n"
+            "Use code_tool with operation='ast_inspect' to analyze code structure.\n"
+            "**TRUST TOOL RESULTS. DO NOT RECOMPUTE OR QUESTION THEM.**"
+        ),
+        "tools": [
+            _build_schema(fn, TOOL_ENUMS.get(fn.__name__))
+            for fn in _CODE_TOOLS
+        ],
+        "dispatch": {fn.__name__: fn for fn in _CODE_TOOLS},
     },
 }
 
@@ -347,13 +366,13 @@ def build_ui():
 
         chatbot = gr.Chatbot(
             show_label=False,
+            sanitize_html=False,
             latex_delimiters=[
                 {"left": "$$", "right": "$$", "display": True},
                 {"left": "$", "right": "$", "display": False},
                 {"left": "\\(", "right": "\\)", "display": False},
                 {"left": "\\[", "right": "\\]", "display": True},
             ],
-
             elem_id="rf-chatbot",
         )
 
