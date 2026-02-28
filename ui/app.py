@@ -168,7 +168,7 @@ def _chat_list(history, message, accumulated):
         {"role": "user", "content": _to_str(message)},
         {"role": "assistant", "content": accumulated},
     ]
-LOADING_DOTS = '⏳ *Thinking...*'
+LOADING_DOTS = '<span class="loading-dots">Thinking<span>.</span><span>.</span><span>.</span></span>'
 
 
 def respond(message, history, expert_name, model_name, endpoint_url):
@@ -301,26 +301,28 @@ def _to_str(content):
 
 
 def _clean_response(text):
-    """Convert <think> blocks into Gradio-compatible markdown blockquotes.
-    Uses '>' blockquotes since Gradio's markdown renderer reliably renders them,
-    unlike <details> HTML which gets stripped.
+    """Collapse <think> blocks into styled, collapsible details.
+    Forces the block open while streaming, then closes it when complete.
     """
     def _replace_closed(m):
         thought = m.group(1).strip()
         if not thought:
             return ""
-        # Indent each line as a blockquote
-        lines = thought.splitlines()
-        quoted = "\n".join(f"> {l}" if l.strip() else ">" for l in lines)
-        return f"\n> **💭 Thought**\n>\n{quoted}\n\n"
+        return (
+            '\n<details class="thinking"><summary>Thinking...</summary>\n'
+            f'\n{thought}\n</details>\n\n'
+        )
 
     def _replace_open(m):
         thought = m.group(1).strip()
         if not thought:
             return ""
-        lines = thought.splitlines()
-        quoted = "\n".join(f"> {l}" if l.strip() else ">" for l in lines)
-        return f"\n> **💭 Thinking...**\n>\n{quoted}\n\n"
+        # The 'open' attribute keeps it expanded while streaming.
+        # Gradio redraws the DOM on every token, so manual clicks would be overwritten.
+        return (
+            '\n<details class="thinking" open><summary>Thinking...</summary>\n'
+            f'\n{thought}\n</details>\n\n'
+        )
 
     text = re.sub(r'<think>(.*?)</think>', _replace_closed, text, flags=re.DOTALL)
     text = re.sub(r'<think>(.*?)$', _replace_open, text, flags=re.DOTALL)
@@ -392,20 +394,15 @@ def build_ui():
         )
 
         # Cosmetic only: grey out button if empty
-        msg.change(
-            fn=None, inputs=[msg], outputs=[send_btn], queue=False,
-            js="""(text) => {
-                const btn = document.querySelector('#rf-send-btn');
-                if (btn) {
-                    btn.classList.remove('rf-active', 'rf-inactive');
-                    btn.classList.add(text && text.trim() ? 'rf-active' : 'rf-inactive');
-                }
-                return arguments[0];  // passthrough for Gradio
-            }"""
-        )
+        def toggle_play(text):
+            is_valid = bool(text and text.strip())
+            return gr.update(elem_classes=["rf-action-btn", "rf-active" if is_valid else "rf-inactive"])
+
+        msg.change(toggle_play, [msg], [send_btn], queue=False)
 
         def user_submit(message, chat_history):
             if not message or not message.strip():
+                # Abort chain if empty
                 raise gr.Error("Please enter a message.")
             chat_history = chat_history or []
             chat_history.append({"role": "user", "content": message})
@@ -420,23 +417,24 @@ def build_ui():
                 for updated in respond(user_msg, prev, expert_name, model_name, endpoint_url):
                     yield updated
             except Exception as e:
+                # Catch any generator exceptions so the UI doesn't silently freeze
                 chat_history.append({"role": "assistant", "content": f"**Fatal Error:** {e}"})
                 yield chat_history
 
-        # JS snippets for button toggling (instant, no server round-trip)
-        _JS_SHOW_STOP = """() => {
-            const send = document.querySelector('#rf-send-btn');
-            const stop = document.querySelector('#rf-stop-btn');
-            if (send) send.style.display = 'none';
-            if (stop) stop.style.display = 'flex';
-        }"""
+        # --- Generation state ---
+        gen_state = gr.State(False)  # True while generating
 
-        _JS_SHOW_SEND = """() => {
-            const send = document.querySelector('#rf-send-btn');
-            const stop = document.querySelector('#rf-stop-btn');
-            if (stop) stop.style.display = 'none';
-            if (send) { send.style.display = 'flex'; }
-        }"""
+        def pre_gen():
+            """Hide send, show stop."""
+            return gr.update(visible=False), gr.update(visible=True)
+
+        def post_gen(text):
+            """Hide stop, show send."""
+            is_valid = bool(text and text.strip())
+            return (
+                gr.update(visible=True, elem_classes=["rf-action-btn", "rf-active" if is_valid else "rf-inactive"]),
+                gr.update(visible=False),
+            )
 
         # --- Submission chains ---
 
@@ -444,14 +442,14 @@ def build_ui():
         user_sub_ev = msg.submit(
             user_submit, [msg, chatbot], [msg, chatbot], queue=False
         )
-        pre_ev = user_sub_ev.then(
-            fn=None, inputs=None, outputs=None, queue=False, js=_JS_SHOW_STOP
+        pre_gen_ev = user_sub_ev.then(
+            pre_gen, None, [send_btn, stop_btn], queue=False
         )
-        bot_ev = pre_ev.then(
+        bot_res_ev = pre_gen_ev.then(
             bot_respond, [chatbot, expert_dd, model_tb, url_tb], chatbot
         )
-        bot_ev.then(
-            fn=None, inputs=None, outputs=None, queue=False, js=_JS_SHOW_SEND
+        bot_res_ev.then(
+            post_gen, msg, [send_btn, stop_btn], queue=False
         )
 
         # 2. Send Button Click
@@ -459,20 +457,22 @@ def build_ui():
             user_submit, [msg, chatbot], [msg, chatbot], queue=False
         )
         btn_pre_ev = btn_sub_ev.then(
-            fn=None, inputs=None, outputs=None, queue=False, js=_JS_SHOW_STOP
+            pre_gen, None, [send_btn, stop_btn], queue=False
         )
-        btn_bot_ev = btn_pre_ev.then(
+        btn_res_ev = btn_pre_ev.then(
             bot_respond, [chatbot, expert_dd, model_tb, url_tb], chatbot
         )
-        btn_bot_ev.then(
-            fn=None, inputs=None, outputs=None, queue=False, js=_JS_SHOW_SEND
+        btn_res_ev.then(
+            post_gen, msg, [send_btn, stop_btn], queue=False
         )
 
-        # 3. Stop Button — cancel + restore via JS
+        # 3. Stop Button — cancel generation AND restore buttons in one handler
         stop_btn.click(
-            fn=None, inputs=None, outputs=None, queue=False,
-            cancels=[bot_ev, btn_bot_ev],
-            js=_JS_SHOW_SEND,
+            fn=post_gen,
+            inputs=msg,
+            outputs=[send_btn, stop_btn],
+            cancels=[bot_res_ev, btn_res_ev],
+            queue=False,
         )
 
     return app
