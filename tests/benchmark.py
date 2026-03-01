@@ -10,10 +10,10 @@ import random
 import re
 import sys
 import time
-import urllib.request
+
 from pathlib import Path
 
-from core import EXPERTS, MAX_ROUNDS, llm_request, stream_to_msg
+from core import EXPERTS, MAX_ROUNDS, llm_request
 
 CACHE_DIR = Path(__file__).resolve().parent / ".cache"
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
@@ -165,9 +165,8 @@ def run_baseline(question: str, model: str, url: str, think: bool = True) -> str
         },
         {"role": "user", "content": question},
     ]
-    resp = llm_request(messages, [], model, url, stream=True, think=think)
-    msg = stream_to_msg(resp)
-    return msg["content"]
+    resp = llm_request(messages, [], model, url, stream=False, think=think)
+    return resp["message"]["content"]
 
 
 def run_reasonforge(question: str, model: str, url: str, think: bool = True) -> tuple[str, int, bool]:
@@ -185,10 +184,10 @@ def run_reasonforge(question: str, model: str, url: str, think: bool = True) -> 
     used_tools = False
     for round_num in range(1, MAX_ROUNDS + 1):
         resp = llm_request(
-            messages, expert["tools"], model, url, stream=True, think=think
+            messages, expert["tools"], model, url, stream=False, think=think
         )
-        msg = stream_to_msg(resp)
-        content = msg["content"]
+        msg = resp["message"]
+        content = msg.get("content", "")
         tool_calls = msg.get("tool_calls", [])
 
         if not tool_calls:

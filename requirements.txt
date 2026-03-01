@@ -3,3 +3,9 @@
 #   uv sync                    (recommended)
 #   pip install .              (core deps)
 #   pip install .[benchmark]   (core + benchmark deps)
+#
+# Base dependencies:
+#   requests>=2.31.0
+#   gradio>=6.0
+#   sympy>=1.13.0
+#   mcp[cli]>=1.26.0

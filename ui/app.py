@@ -281,16 +281,15 @@ def build_ui():
 
         def flush_kv_cache(model_name, endpoint_url):
             """Unload the model from Ollama to clear its KV cache."""
-            import urllib.request, urllib.error
+            import requests
             base = endpoint_url.rsplit("/api/", 1)[0] if "/api/" in endpoint_url else endpoint_url.rstrip("/")
-            payload = json.dumps({"model": model_name, "keep_alive": 0}).encode()
-            req = urllib.request.Request(
-                f"{base}/api/generate", data=payload,
-                headers={"Content-Type": "application/json"},
-            )
             try:
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    resp.read()
+                resp = requests.post(
+                    f"{base}/api/generate",
+                    json={"model": model_name, "keep_alive": 0},
+                    timeout=10
+                )
+                resp.raise_for_status()
                 gr.Info(f"KV cache cleared — {model_name} unloaded.")
             except Exception as e:
                 gr.Warning(f"Failed to flush KV cache: {e}")

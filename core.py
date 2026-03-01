@@ -3,8 +3,7 @@
 import inspect
 import json
 import typing
-import urllib.request
-import urllib.error
+import requests
 
 from experts.math.tools.algebra import math_tool, OPERATIONS as MATH_OPS, DOMAINS
 from experts.math.tools.calculus import calculus_tool, OPERATIONS as CALC_OPS
@@ -121,55 +120,59 @@ def llm_request(messages, tools, model, url, stream=False, think=True):
     if tools:
         payload["tools"] = tools
 
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-
     try:
-        resp = urllib.request.urlopen(req, timeout=300)
+        resp = requests.post(url, json=payload, stream=stream, timeout=300)
+        resp.raise_for_status()
         if not stream:
-            return json.loads(resp.read())
+            return resp.json()
         return resp
-    except urllib.error.HTTPError as e:
-        body = e.read().decode(errors="replace")[:500]
-        raise ConnectionError(f"HTTP {e.code} from {url}\n{body}")
-    except urllib.error.URLError as e:
+    except requests.exceptions.HTTPError as e:
+        body = e.response.text[:500]
+        raise ConnectionError(f"HTTP {e.response.status_code} from {url}\n{body}")
+    except requests.exceptions.ConnectionError as e:
         raise ConnectionError(f"Cannot connect to {url}. Is your model server running?\nDetail: {e}")
-    except TimeoutError:
+    except requests.exceptions.Timeout:
         raise ConnectionError(f"Request to {url} timed out (300s).")
 
 
 def iter_stream(resp):
     """Yield (token, thinking_token, tool_calls, done, msg) from a streaming Ollama response."""
-    for raw_line in resp:
-        line = raw_line.decode("utf-8", errors="replace").strip()
-        if not line:
-            continue
-        chunk = json.loads(line)
-        msg = chunk.get("message", {})
-        yield (
-            msg.get("content", ""),
-            msg.get("thinking", ""),
-            msg.get("tool_calls", []),
-            chunk.get("done", False),
-            msg,
-        )
-        if chunk.get("done"):
-            break
+    try:
+        for raw_line in resp.iter_lines():
+            if not raw_line:
+                continue
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            chunk = json.loads(line)
+            msg = chunk.get("message", {})
+            yield (
+                msg.get("content", ""),
+                msg.get("thinking", ""),
+                msg.get("tool_calls", []),
+                chunk.get("done", False),
+                msg,
+            )
+            if chunk.get("done"):
+                break
+    finally:
+        resp.close()
 
 
 def stream_to_msg(resp):
     """Consume a streaming Ollama response and return the final message dict."""
     content = ""
     tool_calls = []
-    for raw_line in resp:
-        line = raw_line.decode("utf-8", errors="replace").strip()
-        if not line:
-            continue
-        chunk = json.loads(line)
-        msg = chunk.get("message", {})
-        content += msg.get("content", "")
-        if msg.get("tool_calls"):
-            tool_calls.extend(msg["tool_calls"])
-        if chunk.get("done"):
-            break
+    try:
+        for raw_line in resp.iter_lines():
+            if not raw_line:
+                continue
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            chunk = json.loads(line)
+            msg = chunk.get("message", {})
+            content += msg.get("content", "")
+            if msg.get("tool_calls"):
+                tool_calls.extend(msg["tool_calls"])
+            if chunk.get("done"):
+                break
+    finally:
+        resp.close()
     return {"role": "assistant", "content": content, "tool_calls": tool_calls}
