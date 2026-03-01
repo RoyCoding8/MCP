@@ -1,7 +1,4 @@
-"""Shared core — tool schemas, expert definitions, and LLM client.
-
-No Gradio dependency. Used by both ui/app.py and tests/benchmark.py.
-"""
+"""Shared core — tool schemas, expert definitions, and LLM client."""
 
 import inspect
 import json
@@ -15,13 +12,11 @@ from experts.math.tools.matrix import matrix_tool, OPERATIONS as MAT_OPS
 from experts.math.tools.statistics import statistics_tool, OPERATIONS as STAT_OPS
 from experts.code.tools.code import code_tool, OPERATIONS as CODE_OPS
 
-# ── Config ──
-
 DEFAULT_MODEL = "qwen3:32b"
 DEFAULT_URL = "http://localhost:11434/api/chat"
 MAX_ROUNDS = 5
 
-# ── Auto-schema generation ──
+
 
 _PY_TO_JSON = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
@@ -29,7 +24,7 @@ _PY_TO_JSON = {str: "string", int: "integer", float: "number", bool: "boolean"}
 def _json_type(annotation):
     """Map a Python type annotation to a JSON Schema type."""
     origin = typing.get_origin(annotation)
-    if origin is list or origin is typing.List:
+    if origin is list:
         args = typing.get_args(annotation)
         items = {"type": _json_type(args[0])} if args else {}
         return "array", items
@@ -81,7 +76,7 @@ def build_schema(fn, enums=None):
     }
 
 
-# ── Expert definitions ──
+
 
 _MATH_TOOLS = [math_tool, calculus_tool, matrix_tool, statistics_tool]
 _CODE_TOOLS = [code_tool]
@@ -117,7 +112,7 @@ EXPERTS = {
     },
 }
 
-# ── LLM Client ──
+
 
 
 def llm_request(messages, tools, model, url, stream=False, think=True):
@@ -160,3 +155,21 @@ def iter_stream(resp):
         )
         if chunk.get("done"):
             break
+
+
+def stream_to_msg(resp):
+    """Consume a streaming Ollama response and return the final message dict."""
+    content = ""
+    tool_calls = []
+    for raw_line in resp:
+        line = raw_line.decode("utf-8", errors="replace").strip()
+        if not line:
+            continue
+        chunk = json.loads(line)
+        msg = chunk.get("message", {})
+        content += msg.get("content", "")
+        if msg.get("tool_calls"):
+            tool_calls.extend(msg["tool_calls"])
+        if chunk.get("done"):
+            break
+    return {"role": "assistant", "content": content, "tool_calls": tool_calls}

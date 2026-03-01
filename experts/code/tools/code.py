@@ -1,9 +1,4 @@
-"""Code tool — sandboxed Python execution with AST inspection.
-
-Operations: run, check, ast_inspect.
-Uses subprocess with timeout for safe execution.
-Hard AST-based import blocking prevents dangerous operations.
-"""
+"""Sandboxed Python code execution with AST inspection."""
 
 import ast
 import subprocess
@@ -14,7 +9,6 @@ from pathlib import Path
 
 OPERATIONS = {"run", "check", "ast_inspect"}
 
-# Imports/attributes that are blocked before execution
 _BLOCKED_IMPORTS = {
     "os", "shutil", "subprocess", "multiprocessing", "threading",
     "ctypes", "signal", "socket", "http", "urllib", "requests",
@@ -28,13 +22,14 @@ _BLOCKED_ATTRS = {
     "system", "popen", "exec", "eval", "execfile",
     "rmtree", "remove", "unlink", "rename",
     "__import__", "__subclasses__", "__globals__",
+    "__builtins__", "__bases__", "__mro__",
 }
 
-_MAX_OUTPUT = 2000  # Max chars of stdout/stderr to return
+_MAX_OUTPUT = 2000
 
 
 def _scan_imports(tree: ast.AST) -> list[str]:
-    """Scan an AST for blocked imports. Returns list of violations."""
+    """Return list of blocked import/attribute violations in an AST."""
     violations = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -76,11 +71,8 @@ def code_tool(code: str, operation: str = "run",
                 return {"valid": True, "verified": True}
             except SyntaxError as e:
                 return {
-                    "valid": False,
-                    "error": f"SyntaxError: {e.msg}",
-                    "line": e.lineno,
-                    "offset": e.offset,
-                    "verified": True,
+                    "valid": False, "error": f"SyntaxError: {e.msg}",
+                    "line": e.lineno, "offset": e.offset, "verified": True,
                 }
 
         elif operation == "ast_inspect":
@@ -89,9 +81,7 @@ def code_tool(code: str, operation: str = "run",
             except SyntaxError as e:
                 return {"error": f"SyntaxError: {e.msg}", "line": e.lineno, "verified": True}
 
-            functions = []
-            classes = []
-            imports = []
+            functions, classes, imports = [], [], []
             for node in ast.walk(tree):
                 if isinstance(node, ast.FunctionDef):
                     args = [a.arg for a in node.args.args]
@@ -110,15 +100,12 @@ def code_tool(code: str, operation: str = "run",
                         imports.append(node.module)
 
             return {
-                "functions": functions,
-                "classes": classes,
-                "imports": imports,
-                "total_lines": len(code.splitlines()),
+                "functions": functions, "classes": classes,
+                "imports": imports, "total_lines": len(code.splitlines()),
                 "verified": True,
             }
 
         elif operation == "run":
-            # Parse and scan for blocked imports first
             try:
                 tree = ast.parse(code)
             except SyntaxError as e:
@@ -128,28 +115,23 @@ def code_tool(code: str, operation: str = "run",
             if violations:
                 return {"error": "Blocked for safety", "blocked": violations, "exit_code": 1, "verified": True}
 
-            # Write to temp file and execute in subprocess
             with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
                 f.write(code)
                 tmp_path = f.name
 
             try:
                 result = subprocess.run(
-                    [sys.executable, "-u", tmp_path],
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                    input=stdin_data or None,
+                    [sys.executable, "-I", "-u", tmp_path],
+                    capture_output=True, text=True,
+                    timeout=timeout, input=stdin_data or None,
                     cwd=tempfile.gettempdir(),
                 )
                 stdout = result.stdout[:_MAX_OUTPUT] if result.stdout else ""
                 stderr = result.stderr[:_MAX_OUTPUT] if result.stderr else ""
-
                 out = {"stdout": stdout, "stderr": stderr, "exit_code": result.returncode, "verified": True}
                 if len(result.stdout or "") > _MAX_OUTPUT:
                     out["truncated"] = True
                 return out
-
             except subprocess.TimeoutExpired:
                 return {"error": f"Execution timed out ({timeout}s)", "exit_code": -1, "verified": True}
             finally:

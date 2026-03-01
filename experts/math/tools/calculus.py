@@ -31,6 +31,7 @@ def calculus_tool(expression: str, operation: str = "differentiate",
 
     Use for calculus. Operations: differentiate, integrate, limit, series, summation,
     partial_fraction, trigsimp, ode_solve, laplace. Expression is the FULL equation in SymPy syntax.
+    For ode_solve, use 'f' as the function name (e.g. f'' - f = exp(x)).
     """
     try:
         expression = preprocess(expression)
@@ -39,7 +40,7 @@ def calculus_tool(expression: str, operation: str = "differentiate",
 
         if operation == "differentiate":
             result = sympy.diff(expr, sym, order)
-            out_dict =_out(expression, result, f"d^{order}/d{variable}^{order}" if order > 1 else f"d/d{variable}")
+            out_dict = _out(expression, result, f"d^{order}/d{variable}^{order}" if order > 1 else f"d/d{variable}")
             try:
                 out_dict["factored"] = str(sympy.factor(result))
                 roots = sympy.solve(result, sym)
@@ -87,7 +88,6 @@ def calculus_tool(expression: str, operation: str = "differentiate",
 
         elif operation == "ode_solve":
             f = sympy.Function("f")
-            # Interpret expression as an ODE in f(x)
             ode_expr = expr.subs(sympy.Symbol("f"), f(sym))
             sol = sympy.dsolve(ode_expr, f(sym))
             if isinstance(sol, list):
@@ -95,8 +95,8 @@ def calculus_tool(expression: str, operation: str = "differentiate",
             return {"solution": str(sol), "verified": True}
 
         elif operation == "laplace":
-            s = sympy.Symbol("s")
-            result = sympy.laplace_transform(expr, sym, s, noconds=True)
+            s_var = sympy.Symbol("s")
+            result = sympy.laplace_transform(expr, sym, s_var, noconds=True)
             return _out(expression, result, f"Laplace transform ({variable}->s)")
 
         else:

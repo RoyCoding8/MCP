@@ -1,6 +1,4 @@
-"""Matrix tool — determinant, inverse, eigenvalues, eigenvectors, rank, rref,
-transpose, multiply, add, trace, nullspace, columnspace, charpoly, norm, adjugate, solve.
-"""
+"""Matrix tool — linear algebra operations via SymPy."""
 
 import sympy
 from sympy import Matrix

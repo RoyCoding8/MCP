@@ -1,10 +1,7 @@
-"""Algebra + number theory tool.
+"""Algebra and number theory tool.
 
-Operations via enum: compute, solve, simplify, factor, expand, gcd, lcm,
+Operations: compute, solve, simplify, factor, expand, gcd, lcm,
 prime_factors, divisors, mod_inverse, nsolve, crt.
-
-0-token operations (via compute + sympify): totient, fibonacci, catalan, bell,
-factorial, binomial, lucas, mobius, isprime, nextprime.
 """
 
 import sympy
@@ -48,7 +45,10 @@ def math_tool(expression: str, operation: str = "compute",
             sym = Symbol(variable)
             sol_set = solveset(sympy.sympify(expression), sym, DOMAINS.get(domain, S.Reals))
             if sol_set.is_FiniteSet:
-                solutions = sorted(sol_set, key=lambda s: complex(s).real)
+                try:
+                    solutions = sorted(sol_set, key=lambda s: complex(s).real)
+                except (TypeError, ValueError):
+                    solutions = list(sol_set)
                 return {
                     "solutions": [str(s) for s in solutions],
                     "numeric": [_to_float(s) for s in solutions],
@@ -88,7 +88,6 @@ def math_tool(expression: str, operation: str = "compute",
 
         elif operation == "nsolve":
             sym = Symbol(variable)
-            # expression can be "expr, guess" or just "expr" (default guess=0)
             if "," in expression:
                 expr_str, guess_str = expression.rsplit(",", 1)
                 expr = sympy.sympify(expr_str.strip())
@@ -100,7 +99,6 @@ def math_tool(expression: str, operation: str = "compute",
             return {"solution": str(result), "numeric": float(result), "verified": True}
 
         elif operation == "crt":
-            # expression format: "remainders; moduli" e.g. "2,1,7; 3,4,11"
             if ";" not in expression:
                 return {"error": "crt requires 'remainders; moduli' format, e.g. '2,1,7; 3,4,11'"}
             rem_str, mod_str = expression.split(";", 1)

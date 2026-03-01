@@ -1,3 +1,5 @@
+"""ReasonForge sanity checks — quick validation of all tools."""
+
 import sys
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":

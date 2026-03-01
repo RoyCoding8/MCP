@@ -1,13 +1,7 @@
-"""
-ReasonForge A/B Benchmark — MATH-500
+"""ReasonForge A/B Benchmark — MATH-500.
 
-Compares model accuracy WITH vs WITHOUT ReasonForge tools on
+Compares model accuracy with vs without ReasonForge tools on
 competition-level math problems from the Hendrycks MATH dataset.
-
-Usage:
-  uv run python -m tests.benchmark --model qwen3:8b --n 50
-  uv run python -m tests.benchmark --model qwen3:32b --n 500
-  uv run python -m tests.benchmark --model qwen3:8b --n 50 --skip-baseline
 """
 
 import argparse
@@ -19,7 +13,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from core import EXPERTS, MAX_ROUNDS, llm_request
+from core import EXPERTS, MAX_ROUNDS, llm_request, stream_to_msg
 
 CACHE_DIR = Path(__file__).resolve().parent / ".cache"
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
@@ -86,6 +80,7 @@ def extract_boxed(text: str) -> str | None:
 
 def extract_answer(text: str) -> str | None:
     """Extract the final answer from a model response."""
+    
     # Try \boxed{} first
     ans = extract_boxed(text)
     if ans:
@@ -106,19 +101,18 @@ def normalize(ans: str) -> str:
     if not ans:
         return ""
     s = ans.strip()
+
     # Remove common LaTeX wrappers
     s = s.replace("\\$", "").replace("$", "")
     s = s.replace("\\text{", "").replace("\\mathrm{", "")
     s = s.replace("\\left", "").replace("\\right", "")
     s = s.replace("\\,", "").replace("\\ ", " ")
     s = s.replace("\\%", "%")
-    # Normalize fractions: \frac{a}{b} → a/b, \dfrac{a}{b} → a/b
+    
+    # Normalize
     s = re.sub(r"\\d?frac\{([^{}]*)\}\{([^{}]*)\}", r"(\1)/(\2)", s)
-    # Normalize sqrt: \sqrt{x} → sqrt(x)
     s = re.sub(r"\\sqrt\{([^{}]*)\}", r"sqrt(\1)", s)
-    # Remove remaining backslashes before known commands
     s = re.sub(r"\\(pi|infty|cdot|times|div|pm|mp)", r"\1", s)
-    # Collapse whitespace
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
@@ -158,22 +152,6 @@ def grade(predicted: str | None, expected: str | None) -> bool:
     return False
 
 
-def _stream_to_msg(resp) -> dict:
-    """Consume a streaming Ollama response and return the final message dict."""
-    content = ""
-    tool_calls = []
-    for raw_line in resp:
-        line = raw_line.decode("utf-8", errors="replace").strip()
-        if not line:
-            continue
-        chunk = json.loads(line)
-        msg = chunk.get("message", {})
-        content += msg.get("content", "")
-        if msg.get("tool_calls"):
-            tool_calls.extend(msg["tool_calls"])
-        if chunk.get("done"):
-            break
-    return {"role": "assistant", "content": content, "tool_calls": tool_calls}
 
 
 def run_baseline(question: str, model: str, url: str, think: bool = True) -> str:
@@ -188,7 +166,7 @@ def run_baseline(question: str, model: str, url: str, think: bool = True) -> str
         {"role": "user", "content": question},
     ]
     resp = llm_request(messages, [], model, url, stream=True, think=think)
-    msg = _stream_to_msg(resp)
+    msg = stream_to_msg(resp)
     return msg["content"]
 
 
@@ -209,7 +187,7 @@ def run_reasonforge(question: str, model: str, url: str, think: bool = True) -> 
         resp = llm_request(
             messages, expert["tools"], model, url, stream=True, think=think
         )
-        msg = _stream_to_msg(resp)
+        msg = stream_to_msg(resp)
         content = msg["content"]
         tool_calls = msg.get("tool_calls", [])
 

@@ -1,7 +1,4 @@
-"""ReasonForge Chat UI -- Google-inspired Gradio interface with expert selection.
-
-Run:  uv run python -m ui.app
-"""
+"""ReasonForge Chat UI — Gradio interface with expert selection and two-phase pipeline."""
 
 import json
 import pathlib
@@ -14,8 +11,10 @@ from core import (
     iter_stream as _iter_stream,
 )
 
+LOADING_DOTS = '<span class="loading-dots">Thinking<span>.</span><span>.</span><span>.</span></span>'
 
-# -- Chat logic --
+_CSS_PATH = str(pathlib.Path(__file__).with_name("style.css"))
+
 
 def _chat_list(history, message, accumulated):
     """Build a Gradio-compatible chat list with user + assistant messages."""
@@ -23,31 +22,25 @@ def _chat_list(history, message, accumulated):
         {"role": "user", "content": _to_str(message)},
         {"role": "assistant", "content": accumulated},
     ]
-LOADING_DOTS = '<span class="loading-dots">Thinking<span>.</span><span>.</span><span>.</span></span>'
 
 
 def respond(message, history, expert_name, model_name, endpoint_url):
-    """Two-phase chat handler: Compute → Present.
-
-    Phase 1 (COMPUTE): /no_think, tools ON.  Model calls tools.
-    Phase 2 (PRESENT): Thinking ON, no tools. Model reasons + writes answer.
-    """
+    """Two-phase chat: Compute (tools ON, thinking OFF) then Present (thinking ON, no tools)."""
     expert = EXPERTS.get(expert_name)
     if not expert:
         yield _chat_list(history, message, "Expert not found.")
         return
 
     user_content = _to_str(message)
-    base_system = expert["system"]
 
     compute_system = (
-        base_system + "\n\n"
+        expert["system"] + "\n\n"
         "You are an expert reasoning agent. You solve problems by thinking step-by-step and using tools.\n"
         "You may use the <think>...</think> tags to reason before deciding what to do.\n"
         "If you need to compute or look up something, output the proper JSON tool call. I will execute it and return the result.\n"
         "If you have the final answer, simply present it to the user. Do not call tools if you already have the answer."
     )
-    
+
     messages = [{"role": "system", "content": compute_system}]
     for h in history:
         messages.append({"role": h["role"], "content": _to_str(h.get("content", ""))})
@@ -56,7 +49,6 @@ def respond(message, history, expert_name, model_name, endpoint_url):
     accumulated = ""
 
     for round_num in range(MAX_ROUNDS):
-        # We start streaming the model's thought process / answer immediately
         yield _chat_list(history, message, accumulated + "\n\n" + LOADING_DOTS)
 
         try:
@@ -83,11 +75,9 @@ def respond(message, history, expert_name, model_name, endpoint_url):
                     full_content += token
                     changed = True
                 if changed:
-                    # Build the display: wrap thinking in <think> tags so _clean_response renders it
                     display = ""
                     if full_thinking:
                         display += "<think>" + full_thinking
-                        # Only close the tag if we've started getting content (thinking is done)
                         if full_content:
                             display += "</think>"
                     display += full_content
@@ -96,7 +86,6 @@ def respond(message, history, expert_name, model_name, endpoint_url):
         finally:
             resp.close()
 
-        # Build final text for this round
         final_display = ""
         if full_thinking:
             final_display += "<think>" + full_thinking + "</think>"
@@ -105,11 +94,9 @@ def respond(message, history, expert_name, model_name, endpoint_url):
         accumulated += "\n\n" + _clean_response(final_display)
         yield _chat_list(history, message, accumulated)
 
-        # If the model didn't call any tools, it's done reasoning and has provided the final answer!
         if not all_tool_calls:
             break
 
-        # Otherwise, process the tool calls
         messages.append({
             "role": last_msg.get("role", "assistant"),
             "content": full_content,
@@ -153,7 +140,7 @@ def respond(message, history, expert_name, model_name, endpoint_url):
             messages.append({"role": "tool", "content": result_str})
 
 
-# -- Helpers --
+
 
 def _short(v, limit=60):
     s = str(v)
@@ -177,15 +164,11 @@ def _to_str(content):
 
 
 def _clean_response(text):
-    """Collapse <think> blocks into styled, collapsible details.
-    Streaming (unclosed): always open with animated indicator.
-    Complete (closed): collapsed, user can click to expand.
-    """
+    """Collapse <think> blocks into styled, collapsible details."""
     def _replace_closed(m):
         thought = m.group(1).strip()
         if not thought:
             return ""
-        # Count approximate lines for the summary label
         lines = len(thought.split('\n'))
         label = f"Thought process ({lines} lines)"
         return (
@@ -198,8 +181,6 @@ def _clean_response(text):
         thought = m.group(1).strip()
         if not thought:
             return ""
-        # During streaming: show as always-visible div (no details/summary)
-        # so Gradio re-renders don't reset expand/collapse state
         return (
             '\n<div class="thinking thinking-live">'
             '<div class="think-header">'
@@ -214,18 +195,11 @@ def _clean_response(text):
     return text.strip()
 
 
-# -- CSS --
 
-_CSS_PATH = str(pathlib.Path(__file__).with_name("style.css"))
-
-
-
-# -- UI --
 
 def build_ui():
     with gr.Blocks(title="ReasonForge") as app:
 
-        # Header row with title + dark mode toggle
         with gr.Row(elem_id="rf-header-row"):
             gr.Markdown(
                 "# ReasonForge\nDeterministic tools for small language models — choose your expert.",
@@ -233,7 +207,6 @@ def build_ui():
             )
             dark_btn = gr.Button("🌙", elem_id="rf-theme-toggle", scale=0, min_width=42)
 
-        # Dark mode toggle via JS
         dark_btn.click(
             fn=None, inputs=None, outputs=None,
             js="""() => {
@@ -243,7 +216,7 @@ def build_ui():
             }"""
         )
 
-        with gr.Accordion("⚙ Settings", open=False):
+        with gr.Accordion("Settings", open=False):
             with gr.Row():
                 expert_dd = gr.Dropdown(choices=list(EXPERTS.keys()), value="Mathematician", label="Expert", scale=1)
                 model_tb = gr.Textbox(value=DEFAULT_MODEL, label="Model", scale=1)
@@ -268,7 +241,7 @@ def build_ui():
 
         with gr.Row(elem_id="rf-toolbar"):
             clear_btn = gr.Button("🗑 Clear Chat", elem_id="rf-clear-btn", elem_classes=["rf-tool-btn"], scale=1)
-            flush_btn = gr.Button(" Flush KV Cache", elem_id="rf-flush-btn", elem_classes=["rf-tool-btn"], scale=1)
+            flush_btn = gr.Button("Flush KV Cache", elem_id="rf-flush-btn", elem_classes=["rf-tool-btn"], scale=1)
 
         gr.Examples(
             examples=[
@@ -281,7 +254,6 @@ def build_ui():
             inputs=msg,
         )
 
-        # Grey out send button when input is empty
         def toggle_active(text):
             is_valid = bool(text and text.strip())
             return gr.update(elem_classes=["rf-action-btn", "rf-active" if is_valid else "rf-inactive"])
@@ -310,12 +282,10 @@ def build_ui():
         def flush_kv_cache(model_name, endpoint_url):
             """Unload the model from Ollama to clear its KV cache."""
             import urllib.request, urllib.error
-            # Extract base URL (strip /api/chat to get e.g. http://localhost:11434)
             base = endpoint_url.rsplit("/api/", 1)[0] if "/api/" in endpoint_url else endpoint_url.rstrip("/")
             payload = json.dumps({"model": model_name, "keep_alive": 0}).encode()
             req = urllib.request.Request(
-                f"{base}/api/generate",
-                data=payload,
+                f"{base}/api/generate", data=payload,
                 headers={"Content-Type": "application/json"},
             )
             try:
@@ -326,26 +296,20 @@ def build_ui():
                 gr.Warning(f"Failed to flush KV cache: {e}")
             return []
 
-        # --- Event wiring ---
-
-        # Textbox Enter
         msg.submit(
             user_submit, [msg, chatbot], [msg, chatbot], queue=False
         ).then(
             bot_respond, [chatbot, expert_dd, model_tb, url_tb], chatbot
         )
 
-        # Send Button Click
         send_btn.click(
             user_submit, [msg, chatbot], [msg, chatbot], queue=False
         ).then(
             bot_respond, [chatbot, expert_dd, model_tb, url_tb], chatbot
         )
 
-        # Clear Chat
         clear_btn.click(lambda: [], None, chatbot, queue=False)
 
-        # Flush KV Cache (also clears chat since context is gone)
         flush_btn.click(
             flush_kv_cache, [model_tb, url_tb], [chatbot], queue=False
         )

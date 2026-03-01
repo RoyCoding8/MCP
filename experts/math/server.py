@@ -1,8 +1,4 @@
-"""ReasonForge — Math Expert MCP Server.
-
-Run:   uv run python -m experts.math.server
-Test:  uv run mcp dev experts/math/server.py
-"""
+"""ReasonForge — Math Expert MCP Server."""
 
 from mcp.server.fastmcp import FastMCP
 from experts.math.tools.algebra import math_tool
@@ -19,7 +15,6 @@ mcp = FastMCP(
     ),
 )
 
-# Register the 4 consolidated tools
 mcp.tool()(math_tool)
 mcp.tool()(calculus_tool)
 mcp.tool()(matrix_tool)

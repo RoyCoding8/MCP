@@ -1,6 +1,4 @@
-"""Statistics tool — describe, mean, median, mode, std, variance, correlation,
-regression, percentile, zscore, skewness, kurtosis, geometric_mean, harmonic_mean.
-"""
+"""Statistics tool — descriptive and inferential statistics."""
 
 import math
 from statistics import mean, median, mode, stdev, variance, geometric_mean, harmonic_mean
@@ -51,8 +49,7 @@ def statistics_tool(data: list[float], operation: str = "describe",
         elif operation == "correlation":
             if not data_y or len(data) != len(data_y):
                 return {"error": "correlation requires data_y of same length as data"}
-            r = _pearson(data, data_y)
-            return {"correlation": r, "verified": True}
+            return {"correlation": _pearson(data, data_y), "verified": True}
 
         elif operation == "regression":
             if not data_y or len(data) != len(data_y):
@@ -89,7 +86,7 @@ def statistics_tool(data: list[float], operation: str = "describe",
             if s == 0:
                 return {"error": "std is 0, kurtosis undefined"}
             kurt = ((n * (n + 1)) / ((n - 1) * (n - 2) * (n - 3))) * sum(((x - m) / s) ** 4 for x in data)
-            kurt -= (3 * (n - 1) ** 2) / ((n - 2) * (n - 3))  # excess kurtosis
+            kurt -= (3 * (n - 1) ** 2) / ((n - 2) * (n - 3))
             return {"result": kurt, "verified": True}
 
         elif operation == "geometric_mean":
@@ -118,14 +115,12 @@ def _pearson(x, y):
 
 
 def _linreg(x, y):
-    n = len(x)
     mx, my = mean(x), mean(y)
     ss_xy = sum((xi - mx) * (yi - my) for xi, yi in zip(x, y))
     ss_xx = sum((xi - mx) ** 2 for xi in x)
     slope = ss_xy / ss_xx if ss_xx else 0
     intercept = my - slope * mx
-    r = _pearson(x, y)
-    return slope, intercept, r ** 2
+    return slope, intercept, _pearson(x, y) ** 2
 
 
 def _percentile(data, p):

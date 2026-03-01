@@ -1,8 +1,7 @@
-"""Expression preprocessor — uses SymPy's battle-tested parse_expr.
+"""Expression preprocessor — converts natural math notation to SymPy syntax.
 
-Handles:  ^ → **,  2x → 2*x,  (x+1)(x-1) → (x+1)*(x-1),  sin(x)cos(x) → sin(x)*cos(x)
-Also:     infinity/inf → oo  (word-boundary safe)
-All via SymPy's standard_transformations + implicit_multiplication + convert_xor.
+Handles: ^ → **, 2x → 2*x, (x+1)(x-1) → (x+1)*(x-1), infinity/inf → oo.
+Uses SymPy's parse_expr with implicit_multiplication + convert_xor.
 """
 
 import re
@@ -20,8 +19,13 @@ _TRANSFORMATIONS = standard_transformations + (
     implicit_multiplication_application,
 )
 
-# Word-boundary safe: matches standalone infinity/inf/+inf/-inf but NOT "information"
 _INF_RE = re.compile(r'(?<![a-zA-Z])([+-]?\s*)(infinity|inf)(?![a-zA-Z])', re.IGNORECASE)
+
+_BLOCKED = {name: None for name in (
+    "exec", "eval", "__import__", "open", "compile",
+    "globals", "locals", "getattr", "setattr", "delattr",
+    "breakpoint", "exit", "quit", "input", "print",
+)}
 
 
 def _inf_replace(m):
@@ -32,30 +36,25 @@ def _inf_replace(m):
 def preprocess(expression: str) -> str:
     """Convert natural math notation to SymPy-compatible syntax.
 
-    Uses SymPy's own parser with implicit multiplication and ^ → ** conversion.
     Falls back to the original expression if parsing fails.
-    A restricted local_dict blocks dangerous builtins (exec, eval, __import__, etc.).
     """
     try:
         s = expression.strip()
-
-        # Replace standalone infinity/inf with oo (word-boundary safe)
         s = _INF_RE.sub(_inf_replace, s)
 
-        # Comma-separated inputs (e.g. "12, 18" for GCD/LCM) — just fix ^ and return
         if "," in s:
-            return s.replace("^", "**")
+            parts = []
+            for part in s.split(","):
+                try:
+                    parsed = parse_expr(part.strip(), local_dict=_BLOCKED,
+                                        transformations=_TRANSFORMATIONS, evaluate=False)
+                    parts.append(str(parsed))
+                except Exception:
+                    parts.append(part.strip().replace("^", "**"))
+            return ", ".join(parts)
 
-        # Restricted namespace: block dangerous builtins while allowing SymPy symbols
-        _blocked = {name: None for name in (
-            "exec", "eval", "__import__", "open", "compile",
-            "globals", "locals", "getattr", "setattr", "delattr",
-            "breakpoint", "exit", "quit", "input", "print",
-        )}
-        parsed = parse_expr(s, local_dict=_blocked,
+        parsed = parse_expr(s, local_dict=_BLOCKED,
                             transformations=_TRANSFORMATIONS, evaluate=False)
         return str(parsed)
     except Exception:
-        # If SymPy can't parse it, return as-is and let the downstream tool handle the error
         return expression.strip()
-

@@ -1,4 +1,4 @@
-/* ReasonForge — Custom Styles */
+/* ReasonForge Styles */
 
 :root {
     --rf-primary: #1a73e8;
@@ -28,7 +28,6 @@
     --rf-gradient: linear-gradient(135deg, #8ab4f8, #aecbfa);
 }
 
-/* ── Layout ── */
 .gradio-container {
     max-width: 1200px !important;
     margin: 0 auto !important;
@@ -36,7 +35,6 @@
     padding: 0 24px !important;
 }
 
-/* ── Header ── */
 #rf-header-row {
     display: flex !important;
     align-items: center !important;
@@ -85,7 +83,6 @@
     background: var(--rf-surface) !important;
 }
 
-/* ── Chatbot ── */
 .chatbot {
     border: none !important;
     background: transparent !important;
@@ -98,21 +95,18 @@
     font-size: 15px !important;
     line-height: 1.65 !important;
 }
-/* User bubble */
 .message.user {
     background: var(--rf-surface-dim) !important;
     border-radius: 20px !important;
     padding: 12px 18px !important;
     align-self: flex-end !important;
 }
-/* Assistant bubble */
 .message.bot {
     background: transparent !important;
     padding: 12px 0 !important;
     align-self: flex-start !important;
 }
 
-/* ── Input Pill ── */
 #rf-input-pill {
     background: var(--rf-surface-dim) !important;
     border: 1px solid var(--rf-border) !important;
@@ -141,7 +135,6 @@
     padding: 10px 0 !important;
 }
 
-/* ── Buttons (ChatGPT style) ── */
 #rf-btn-container {
     position: relative !important;
     width: 36px !important;
@@ -171,12 +164,9 @@ button.rf-action-btn:active {
     transform: scale(0.9) !important;
 }
 
-/* Base style for send button */
 #rf-send-btn {
     font-size: 16px !important;
 }
-
-/* Inactive (empty textbox) */
 #rf-send-btn.rf-inactive {
     background: #d1d5db !important;
     color: #ffffff !important;
@@ -185,8 +175,6 @@ button.rf-action-btn:active {
     background: #3f3f46 !important;
     color: #a1a1aa !important;
 }
-
-/* Active (textbox has text) */
 #rf-send-btn.rf-active {
     background: #000000 !important;
     color: #ffffff !important;
@@ -196,7 +184,6 @@ button.rf-action-btn:active {
     color: #000000 !important;
 }
 
-/* ── Toolbar (Clear / Flush) ── */
 #rf-toolbar {
     display: flex !important;
     gap: 8px !important;
@@ -222,14 +209,12 @@ button.rf-tool-btn:hover {
     box-shadow: 0 2px 8px rgba(66, 133, 244, 0.1) !important;
 }
 
-/* ── Settings accordion ── */
 .accordion {
     border: 1px solid var(--rf-border) !important;
     border-radius: var(--rf-radius) !important;
     margin-bottom: 12px !important;
 }
 
-/* ── Examples ── */
 .examples-holder button {
     border: 1px solid var(--rf-border) !important;
     border-radius: 20px !important;
@@ -245,7 +230,6 @@ button.rf-tool-btn:hover {
     box-shadow: 0 2px 8px rgba(66, 133, 244, 0.1) !important;
 }
 
-/* ── Thinking blocks (modern LLM style) ── */
 .thinking {
     border: none;
     border-left: 3px solid var(--rf-border);
@@ -279,13 +263,6 @@ details.thinking[open] summary::after {
     transform: rotate(90deg);
 }
 
-/* Icon */
-.think-icon {
-    font-size: 14px;
-    line-height: 1;
-}
-
-/* Body */
 .think-body {
     font-size: 13px;
     color: var(--rf-text-sec);
@@ -301,7 +278,6 @@ details.thinking[open] summary::after {
     margin: 4px 0;
 }
 
-/* ── Live (streaming) state — uses div, always visible ── */
 .thinking-live {
     border-left-color: var(--rf-primary);
     animation: think-border-pulse 2s ease-in-out infinite;
@@ -338,7 +314,6 @@ details.thinking[open] summary::after {
     50% { border-left-color: var(--rf-accent); }
 }
 
-/* ── Done (completed) state ── */
 details.thinking-done {
     border-left-color: var(--rf-border);
 }
@@ -350,7 +325,6 @@ details.thinking-done summary:hover {
     opacity: 1;
 }
 
-/* ── Tool call blocks ── */
 details summary code {
     background: var(--rf-surface-dim);
     padding: 3px 8px;
@@ -358,7 +332,6 @@ details summary code {
     font-size: 12px;
 }
 
-/* ── Loading dots ── */
 .loading-dots {
     color: var(--rf-text-sec);
     font-size: 14px;
