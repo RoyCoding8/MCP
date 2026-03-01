@@ -26,7 +26,6 @@ RESULTS_DIR = Path(__file__).resolve().parent / "results"
 MATH_EXPERT = EXPERTS["Mathematician"]
 
 def download_math(n: int, seed: int = 42) -> list[dict]:
-    """Download MATH test problems from HuggingFace datasets-server API."""
     cache_file = CACHE_DIR / "math_test.json"
 
     if cache_file.exists():
@@ -34,49 +33,26 @@ def download_math(n: int, seed: int = 42) -> list[dict]:
             problems = json.load(f)
         print(f"  Loaded {len(problems)} problems from cache")
     else:
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        problems = []
-        page_size = 100
-        print("  Downloading MATH dataset from HuggingFace...", end="", flush=True)
-        for offset in range(0, 5000, page_size):
-            api_url = (
-                "https://datasets-server.huggingface.co/rows?"
-                "dataset=hendrycks/competition_math&config=default"
-                f"&split=test&offset={offset}&length={page_size}"
-            )
-            try:
-                req = urllib.request.Request(api_url)
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    data = json.loads(resp.read().decode())
-                rows = data.get("rows", [])
-                if not rows:
-                    break
-                for row in rows:
-                    r = row.get("row", {})
-                    problems.append({
-                        "problem": r.get("problem", ""),
-                        "solution": r.get("solution", ""),
-                        "level": r.get("level", ""),
-                        "type": r.get("type", ""),
-                    })
-                print(".", end="", flush=True)
-            except Exception as e:
-                print(f"\n  Warning: Failed at offset {offset}: {e}")
-                break
-        print(f" {len(problems)} total")
-
-        if not problems:
-            print("\n  ERROR: Could not download dataset.")
-            print("  Try running: pip install datasets && python -c \"")
-            print("    from datasets import load_dataset")
-            print("    ds = load_dataset('hendrycks/competition_math', split='test')")
-            print("    ds.to_json('tests/.cache/math_test.json')\"")
+        try:
+            from datasets import load_dataset
+        except ImportError:
+            print("  ERROR: 'datasets' package not installed.")
+            print("  Run:  uv add datasets")
             sys.exit(1)
+
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        print("  Downloading MATH dataset...", end="", flush=True)
+        ds = load_dataset("qwedsacf/competition_math", split="train")
+        problems = [
+            {"problem": row["problem"], "solution": row["solution"],
+             "level": row["level"], "type": row["type"]}
+            for row in ds
+        ]
+        print(f" {len(problems)} problems")
 
         with open(cache_file, "w") as f:
             json.dump(problems, f)
 
-    # Deterministic sample
     rng = random.Random(seed)
     if n < len(problems):
         problems = rng.sample(problems, n)
@@ -182,7 +158,25 @@ def grade(predicted: str | None, expected: str | None) -> bool:
     return False
 
 
-def run_baseline(question: str, model: str, url: str) -> str:
+def _stream_to_msg(resp) -> dict:
+    """Consume a streaming Ollama response and return the final message dict."""
+    content = ""
+    tool_calls = []
+    for raw_line in resp:
+        line = raw_line.decode("utf-8", errors="replace").strip()
+        if not line:
+            continue
+        chunk = json.loads(line)
+        msg = chunk.get("message", {})
+        content += msg.get("content", "")
+        if msg.get("tool_calls"):
+            tool_calls.extend(msg["tool_calls"])
+        if chunk.get("done"):
+            break
+    return {"role": "assistant", "content": content, "tool_calls": tool_calls}
+
+
+def run_baseline(question: str, model: str, url: str, think: bool = True) -> str:
     messages = [
         {
             "role": "system",
@@ -193,11 +187,12 @@ def run_baseline(question: str, model: str, url: str) -> str:
         },
         {"role": "user", "content": question},
     ]
-    resp = llm_request(messages, [], model, url, stream=False, think=True)
-    return resp.get("message", {}).get("content", "")
+    resp = llm_request(messages, [], model, url, stream=True, think=think)
+    msg = _stream_to_msg(resp)
+    return msg["content"]
 
 
-def run_reasonforge(question: str, model: str, url: str) -> tuple[str, int, bool]:
+def run_reasonforge(question: str, model: str, url: str, think: bool = True) -> tuple[str, int, bool]:
     expert = MATH_EXPERT
     sys_prompt = (
         expert["system"]
@@ -212,21 +207,17 @@ def run_reasonforge(question: str, model: str, url: str) -> tuple[str, int, bool
     used_tools = False
     for round_num in range(1, MAX_ROUNDS + 1):
         resp = llm_request(
-            messages, expert["tools"], model, url, stream=False, think=True
+            messages, expert["tools"], model, url, stream=True, think=think
         )
-        msg = resp.get("message", {})
-        content = msg.get("content", "")
+        msg = _stream_to_msg(resp)
+        content = msg["content"]
         tool_calls = msg.get("tool_calls", [])
 
         if not tool_calls:
             return content, round_num, used_tools
 
         used_tools = True
-        messages.append({
-            "role": msg.get("role", "assistant"),
-            "content": content,
-            "tool_calls": tool_calls,
-        })
+        messages.append(msg)
 
         for tc in tool_calls:
             name = tc["function"]["name"]
@@ -270,11 +261,16 @@ def main():
         action="store_true",
         help="Skip the baseline (no-tools) run. Useful if you already have baseline results.",
     )
+    parser.add_argument(
+        "--think",
+        action="store_true",
+        help="Enable thinking mode. Omit this for models that don't support it (e.g. llama3.2).",
+    )
     args = parser.parse_args()
-    print(f"\n{'═' * 56}")
+    print(f"\n{'-' * 56}")
     print(f"  ReasonForge A/B Benchmark — {args.model}")
     print(f"  {args.n} problems · seed={args.seed}")
-    print(f"{'═' * 56}\n")
+    print(f"{'-' * 56}\n")
 
     problems = download_math(args.n, args.seed)
     n = len(problems)
@@ -282,6 +278,9 @@ def main():
 
     baseline_correct = 0
     rf_correct = 0
+    baseline_score = 0
+    rf_score = 0
+    total_score = 0
     delegation_count = 0
     total_rounds = 0
     results = []
@@ -289,31 +288,41 @@ def main():
     for i, prob in enumerate(problems):
         expected = extract_boxed(prob["solution"])
         level_num = prob["level"].replace("Level ", "") if prob["level"] else "?"
+        try:
+            weight = int(level_num)
+        except ValueError:
+            weight = 1
+        total_score += weight
+
         label = f"[{i+1:>{len(str(n))}}/{n}] {prob['type']:<20} L{level_num}"
         print(f"  {label}  ", end="", flush=True)
 
         b_ans, b_ok = None, False
         if not args.skip_baseline:
             try:
-                b_resp = run_baseline(prob["problem"], args.model, args.url)
+                b_resp = run_baseline(prob["problem"], args.model, args.url, think=args.think)
                 b_ans = extract_answer(b_resp)
                 b_ok = grade(b_ans, expected)
                 baseline_correct += b_ok
+                if b_ok:
+                    baseline_score += weight
             except Exception as e:
-                print(f"B:ERR ", end="")
+                print(f"B:ERR({e}) ", end="")
 
         rf_ans, rf_ok, rounds, used = None, False, 0, False
         try:
             rf_resp, rounds, used = run_reasonforge(
-                prob["problem"], args.model, args.url
+                prob["problem"], args.model, args.url, think=args.think
             )
             rf_ans = extract_answer(rf_resp)
             rf_ok = grade(rf_ans, expected)
             rf_correct += rf_ok
+            if rf_ok:
+                rf_score += weight
             delegation_count += used
             total_rounds += rounds
         except Exception as e:
-            print(f"RF:ERR ", end="")
+            print(f"RF:ERR({e}) ", end="")
 
         status = ""
         if not args.skip_baseline:
@@ -342,6 +351,7 @@ def main():
             "rf_correct": rf_ok,
             "rf_rounds": rounds,
             "rf_used_tools": used,
+            "weight": weight,
         })
 
     print(f"\n{'-' * 56}")
@@ -352,14 +362,25 @@ def main():
         b_pct = baseline_correct / n if n else 0
         r_pct = rf_correct / n if n else 0
         delta = r_pct - b_pct
+        b_score_pct = baseline_score / total_score if total_score else 0
+        r_score_pct = rf_score / total_score if total_score else 0
+        score_delta = r_score_pct - b_score_pct
+        
         print(f"  {'':18} {'Baseline':>10}  {'ReasonForge':>12}")
         print(f"  {'Correct:':18} {baseline_correct:>7}/{n}  {rf_correct:>9}/{n}")
-        print(f"  {'Accuracy:':18} {b_pct:>9.1%}  {r_pct:>11.1%}")
-        arrow = "▲" if delta >= 0 else "▼"
+        print(f"  {'Uniform Acc:':18} {b_pct:>9.1%}  {r_pct:>11.1%}")
+        arrow = "    ▲" if delta >= 0 else "    ▼"
         print(f"  {'':18} {'':>10}  {arrow} {delta:+.1%}")
+        
+        print(f"  {'Weighted Score:':18} {baseline_score:>7}/{total_score}  {rf_score:>9}/{total_score}")
+        print(f"  {'Weighted Acc:':18} {b_score_pct:>9.1%}  {r_score_pct:>11.1%}")
+        score_arrow = "    ▲" if score_delta >= 0 else "    ▼"
+        print(f"  {'':18} {'':>10}  {score_arrow} {score_delta:+.1%}")
     else:
         r_pct = rf_correct / n if n else 0
-        print(f"  ReasonForge:  {rf_correct}/{n} ({r_pct:.1%})")
+        r_score_pct = rf_score / total_score if total_score else 0
+        print(f"  ReasonForge (Uniform):  {rf_correct}/{n} ({r_pct:.1%})")
+        print(f"  ReasonForge (Weighted): {rf_score}/{total_score} ({r_score_pct:.1%})")
 
     d_pct = delegation_count / n if n else 0
     avg_r = total_rounds / n if n else 0

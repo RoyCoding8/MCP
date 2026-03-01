@@ -198,12 +198,15 @@ def _clean_response(text):
         thought = m.group(1).strip()
         if not thought:
             return ""
+        # During streaming: show as always-visible div (no details/summary)
+        # so Gradio re-renders don't reset expand/collapse state
         return (
-            '\n<details class="thinking thinking-live"><summary>'
+            '\n<div class="thinking thinking-live">'
+            '<div class="think-header">'
             '<span class="think-label">Thinking</span>'
             '<span class="think-dots"><span>.</span><span>.</span><span>.</span></span>'
-            '</summary>'
-            f'\n<div class="think-body">\n\n{thought}\n\n</div></details>\n\n'
+            '</div>'
+            f'\n<div class="think-body">\n\n{thought}\n\n</div></div>\n\n'
         )
 
     text = re.sub(r'<think>(.*?)</think>', _replace_closed, text, flags=re.DOTALL)

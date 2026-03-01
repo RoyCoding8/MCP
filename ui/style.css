@@ -246,7 +246,7 @@ button.rf-tool-btn:hover {
 }
 
 /* ── Thinking blocks (modern LLM style) ── */
-details.thinking {
+.thinking {
     border: none;
     border-left: 3px solid var(--rf-border);
     border-radius: 0;
@@ -301,16 +301,19 @@ details.thinking[open] summary::after {
     margin: 4px 0;
 }
 
-/* ── Live (streaming) state ── */
-details.thinking-live {
+/* ── Live (streaming) state — uses div, always visible ── */
+.thinking-live {
     border-left-color: var(--rf-primary);
     animation: think-border-pulse 2s ease-in-out infinite;
 }
-details.thinking-live summary {
+.think-header {
+    font-size: 13px;
+    font-weight: 500;
     color: var(--rf-primary);
-}
-details.thinking-live summary::after {
-    color: var(--rf-primary);  /* match the live theme color */
+    padding: 4px 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
 .think-label {
     font-weight: 600;
