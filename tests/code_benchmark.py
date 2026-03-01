@@ -298,42 +298,61 @@ def main():
     delegation_count = 0
     total_rounds = 0
     results = []
+    t_start = time.time()
 
     for i, prob in enumerate(problems):
         task_id = prob["task_id"]
         label = f"[{i+1:>{len(str(n))}}/{n}] {task_id}"
         print(f"  {label}  ", end="", flush=True)
 
-        # --- Baseline ---
         b_ok = False
-        if not args.skip_baseline:
-            try:
-                b_resp = run_baseline(
-                    prob["prompt"], args.model, args.url, think=args.think
-                )
-                b_completion = extract_completion(b_resp, prob["prompt"])
-                b_result = check_correctness(prob, b_completion, timeout=args.timeout)
-                b_ok = b_result["passed"]
-                baseline_pass += b_ok
-            except Exception as e:
-                print(f"B:ERR({e}) ", end="")
-
-        # --- ReasonForge ---
         rf_ok = False
         rounds = 0
         used = False
-        try:
-            rf_resp, rounds, used = run_reasonforge(
-                prob["prompt"], args.model, args.url, think=args.think
-            )
-            rf_completion = extract_completion(rf_resp, prob["prompt"])
-            rf_result = check_correctness(prob, rf_completion, timeout=args.timeout)
-            rf_ok = rf_result["passed"]
-            rf_pass += rf_ok
-            delegation_count += used
-            total_rounds += rounds
-        except Exception as e:
-            print(f"RF:ERR({e}) ", end="")
+        t0 = time.time()
+
+        if not args.skip_baseline:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                b_future = pool.submit(
+                    run_baseline, prob["prompt"], args.model, args.url, think=args.think
+                )
+                rf_future = pool.submit(
+                    run_reasonforge, prob["prompt"], args.model, args.url, think=args.think
+                )
+
+                try:
+                    b_resp = b_future.result()
+                    b_completion = extract_completion(b_resp, prob["prompt"])
+                    b_result = check_correctness(prob, b_completion, timeout=args.timeout)
+                    b_ok = b_result["passed"]
+                    baseline_pass += b_ok
+                except Exception as e:
+                    print(f"B:ERR({e}) ", end="")
+
+                try:
+                    rf_resp, rounds, used = rf_future.result()
+                    rf_completion = extract_completion(rf_resp, prob["prompt"])
+                    rf_result = check_correctness(prob, rf_completion, timeout=args.timeout)
+                    rf_ok = rf_result["passed"]
+                    rf_pass += rf_ok
+                    delegation_count += used
+                    total_rounds += rounds
+                except Exception as e:
+                    print(f"RF:ERR({e}) ", end="")
+        else:
+            try:
+                rf_resp, rounds, used = run_reasonforge(
+                    prob["prompt"], args.model, args.url, think=args.think
+                )
+                rf_completion = extract_completion(rf_resp, prob["prompt"])
+                rf_result = check_correctness(prob, rf_completion, timeout=args.timeout)
+                rf_ok = rf_result["passed"]
+                rf_pass += rf_ok
+                delegation_count += used
+                total_rounds += rounds
+            except Exception as e:
+                print(f"RF:ERR({e}) ", end="")
 
         status = ""
         if not args.skip_baseline:
@@ -347,6 +366,9 @@ def main():
             status += " ★"
         elif not args.skip_baseline and b_ok and not rf_ok:
             status += " ▼"
+        dt = time.time() - t0
+        elapsed = time.time() - t_start
+        status += f"  {dt:.1f}s  ({elapsed:.0f}s)"
 
         print(status)
 

@@ -261,6 +261,7 @@ def main():
     delegation_count = 0
     total_rounds = 0
     results = []
+    t_start = time.time()
 
     for i, prob in enumerate(problems):
         expected = extract_boxed(prob["solution"])
@@ -275,31 +276,54 @@ def main():
         print(f"  {label}  ", end="", flush=True)
 
         b_ans, b_ok = None, False
-        if not args.skip_baseline:
-            try:
-                b_resp = run_baseline(prob["problem"], args.model, args.url, think=args.think)
-                b_ans = extract_answer(b_resp)
-                b_ok = grade(b_ans, expected)
-                baseline_correct += b_ok
-                if b_ok:
-                    baseline_score += weight
-            except Exception as e:
-                print(f"B:ERR({e}) ", end="")
-
         rf_ans, rf_ok, rounds, used = None, False, 0, False
-        try:
-            rf_resp, rounds, used = run_reasonforge(
-                prob["problem"], args.model, args.url, think=args.think
-            )
-            rf_ans = extract_answer(rf_resp)
-            rf_ok = grade(rf_ans, expected)
-            rf_correct += rf_ok
-            if rf_ok:
-                rf_score += weight
-            delegation_count += used
-            total_rounds += rounds
-        except Exception as e:
-            print(f"RF:ERR({e}) ", end="")
+        t0 = time.time()
+
+        if not args.skip_baseline:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                b_future = pool.submit(
+                    run_baseline, prob["problem"], args.model, args.url, think=args.think
+                )
+                rf_future = pool.submit(
+                    run_reasonforge, prob["problem"], args.model, args.url, think=args.think
+                )
+
+                try:
+                    b_resp = b_future.result()
+                    b_ans = extract_answer(b_resp)
+                    b_ok = grade(b_ans, expected)
+                    baseline_correct += b_ok
+                    if b_ok:
+                        baseline_score += weight
+                except Exception as e:
+                    print(f"B:ERR({e}) ", end="")
+
+                try:
+                    rf_resp, rounds, used = rf_future.result()
+                    rf_ans = extract_answer(rf_resp)
+                    rf_ok = grade(rf_ans, expected)
+                    rf_correct += rf_ok
+                    if rf_ok:
+                        rf_score += weight
+                    delegation_count += used
+                    total_rounds += rounds
+                except Exception as e:
+                    print(f"RF:ERR({e}) ", end="")
+        else:
+            try:
+                rf_resp, rounds, used = run_reasonforge(
+                    prob["problem"], args.model, args.url, think=args.think
+                )
+                rf_ans = extract_answer(rf_resp)
+                rf_ok = grade(rf_ans, expected)
+                rf_correct += rf_ok
+                if rf_ok:
+                    rf_score += weight
+                delegation_count += used
+                total_rounds += rounds
+            except Exception as e:
+                print(f"RF:ERR({e}) ", end="")
 
         status = ""
         if not args.skip_baseline:
@@ -313,6 +337,8 @@ def main():
             status += " ★"
         elif not args.skip_baseline and b_ok and not rf_ok:
             status += " ▼"
+        dt = time.time() - t0
+        status += f"  {dt:.1f}s  ({elapsed:.0f}s)"
 
         print(status)
 
