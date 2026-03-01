@@ -338,7 +338,7 @@ def main():
         elif not args.skip_baseline and b_ok and not rf_ok:
             status += " ▼"
         dt = time.time() - t0
-        status += f"  {dt:.1f}s  ({elapsed:.0f}s)"
+        status += f"  Time taken: {dt:.1f}s"
 
         print(status)
 
