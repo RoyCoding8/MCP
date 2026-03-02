@@ -235,6 +235,13 @@ def _append_checkpoint(path, record):
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _timed(fn, *args, **kwargs):
+    """Run fn and return (result, elapsed_seconds)."""
+    t = time.time()
+    result = fn(*args, **kwargs)
+    return result, round(time.time() - t, 1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="ReasonForge A/B Benchmark (MATH-500)"
@@ -318,20 +325,21 @@ def main():
 
         b_ans, b_ok = None, False
         rf_ans, rf_ok, rounds, used = None, False, 0, False
+        b_time, rf_time = None, None
         t0 = time.time()
 
         if not args.skip_baseline:
             from concurrent.futures import ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=2) as pool:
                 b_future = pool.submit(
-                    run_baseline, prob["problem"], args.model, args.url, think=args.think
+                    _timed, run_baseline, prob["problem"], args.model, args.url, think=args.think
                 )
                 rf_future = pool.submit(
-                    run_reasonforge, prob["problem"], args.model, args.url, think=args.think
+                    _timed, run_reasonforge, prob["problem"], args.model, args.url, think=args.think
                 )
 
                 try:
-                    b_resp = b_future.result()
+                    b_resp, b_time = b_future.result()
                     b_ans = extract_answer(b_resp)
                     b_ok = grade(b_ans, expected)
                     baseline_correct += b_ok
@@ -341,7 +349,7 @@ def main():
                     detail += f"B:ERR({e}) "
 
                 try:
-                    rf_resp, rounds, used = rf_future.result()
+                    (rf_resp, rounds, used), rf_time = rf_future.result()
                     rf_ans = extract_answer(rf_resp)
                     rf_ok = grade(rf_ans, expected)
                     rf_correct += rf_ok
@@ -353,8 +361,8 @@ def main():
                     detail += f"RF:ERR({e}) "
         else:
             try:
-                rf_resp, rounds, used = run_reasonforge(
-                    prob["problem"], args.model, args.url, think=args.think
+                (rf_resp, rounds, used), rf_time = _timed(
+                    run_reasonforge, prob["problem"], args.model, args.url, think=args.think
                 )
                 rf_ans = extract_answer(rf_resp)
                 rf_ok = grade(rf_ans, expected)
@@ -379,7 +387,12 @@ def main():
         elif not args.skip_baseline and b_ok and not rf_ok:
             status += " ▼"
         dt = time.time() - t0
-        status += f"  Time taken: {dt:.1f}s"
+        if b_time is not None and rf_time is not None:
+            status += f"  B:{b_time:.1f}s RF:{rf_time:.1f}s"
+        elif rf_time is not None:
+            status += f"  RF:{rf_time:.1f}s"
+        else:
+            status += f"  {dt:.1f}s"
 
         detail += status
         tqdm.write(detail)
@@ -401,6 +414,8 @@ def main():
             "rf_rounds": rounds,
             "rf_used_tools": used,
             "weight": weight,
+            "baseline_time_s": b_time,
+            "rf_time_s": rf_time,
         }
         results.append(record)
         _append_checkpoint(checkpoint_file, record)
@@ -435,8 +450,16 @@ def main():
 
     d_pct = delegation_count / n if n else 0
     avg_r = total_rounds / n if n else 0
+    b_times = [r["baseline_time_s"] for r in results if r.get("baseline_time_s") is not None]
+    rf_times = [r["rf_time_s"] for r in results if r.get("rf_time_s") is not None]
+    avg_bt = sum(b_times) / len(b_times) if b_times else 0
+    avg_rt = sum(rf_times) / len(rf_times) if rf_times else 0
     print(f"\n  Delegation:   {delegation_count}/{n} ({d_pct:.1%}) used tools")
     print(f"  Avg Rounds:   {avg_r:.1f}")
+    if b_times:
+        print(f"  Avg Time:     B:{avg_bt:.1f}s  RF:{avg_rt:.1f}s  (Δ{avg_rt - avg_bt:+.1f}s)")
+    else:
+        print(f"  Avg Time:     RF:{avg_rt:.1f}s")
 
     print(f"\n  By difficulty:")
     for lvl in sorted(set(r["level"] for r in results)):
@@ -479,6 +502,8 @@ def main():
         "delta": (rf_correct - baseline_correct) / n if (not args.skip_baseline and n) else None,
         "delegation_rate": d_pct,
         "avg_rounds": avg_r,
+        "avg_baseline_time_s": avg_bt if b_times else None,
+        "avg_rf_time_s": avg_rt if rf_times else None,
         "results": results,
     }
 
