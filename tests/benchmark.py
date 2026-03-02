@@ -13,6 +13,8 @@ import time
 
 from pathlib import Path
 
+from tqdm import tqdm
+
 from core import EXPERTS, MAX_ROUNDS, llm_request
 
 CACHE_DIR = Path(__file__).resolve().parent / ".cache"
@@ -215,6 +217,24 @@ def run_reasonforge(question: str, model: str, url: str, think: bool = True) -> 
     return content, MAX_ROUNDS, used_tools
 
 
+def _load_checkpoint(path):
+    """Load completed results from a JSONL checkpoint file."""
+    results = []
+    if path.exists():
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    results.append(json.loads(line))
+    return results
+
+
+def _append_checkpoint(path, record):
+    """Append a single result to a JSONL checkpoint file."""
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="ReasonForge A/B Benchmark (MATH-500)"
@@ -243,6 +263,12 @@ def main():
         action="store_true",
         help="Enable thinking mode. Omit this for models that don't support it (e.g. llama3.2).",
     )
+    parser.add_argument(
+        "--results-dir",
+        type=str,
+        default=None,
+        help="Persistent results directory (e.g. Google Drive). Enables checkpoint/resume.",
+    )
     args = parser.parse_args()
     print(f"\n{'-' * 56}")
     print(f"  ReasonForge A/B Benchmark — {args.model}")
@@ -251,19 +277,34 @@ def main():
 
     problems = download_math(args.n, args.seed)
     n = len(problems)
+
+    results_dir = Path(args.results_dir) if args.results_dir else RESULTS_DIR
+    results_dir.mkdir(parents=True, exist_ok=True)
+    model_safe = args.model.replace(":", "_").replace("/", "_")
+    checkpoint_file = results_dir / f"math_{model_safe}_s{args.seed}.jsonl"
+
+    prior = _load_checkpoint(checkpoint_file)
+    done_indices = {r["index"] for r in prior}
+    results = list(prior)
+    if done_indices:
+        print(f"  Resuming: {len(done_indices)}/{n} already completed")
     print(f"  Evaluating {n} problems\n")
 
-    baseline_correct = 0
-    rf_correct = 0
-    baseline_score = 0
-    rf_score = 0
-    total_score = 0
-    delegation_count = 0
-    total_rounds = 0
-    results = []
+    baseline_correct = sum(1 for r in prior if r.get("baseline_correct"))
+    rf_correct = sum(1 for r in prior if r.get("rf_correct"))
+    baseline_score = sum(r.get("weight", 1) for r in prior if r.get("baseline_correct"))
+    rf_score = sum(r.get("weight", 1) for r in prior if r.get("rf_correct"))
+    total_score = sum(r.get("weight", 1) for r in prior)
+    delegation_count = sum(1 for r in prior if r.get("rf_used_tools"))
+    total_rounds = sum(r.get("rf_rounds", 0) for r in prior)
     t_start = time.time()
 
-    for i, prob in enumerate(problems):
+    remaining = [(i, p) for i, p in enumerate(problems) if i not in done_indices]
+    pbar = tqdm(remaining, desc=args.model, unit="prob",
+                initial=len(done_indices), total=n)
+
+    for i, prob in pbar:
+
         expected = extract_boxed(prob["solution"])
         level_num = prob["level"].replace("Level ", "") if prob["level"] else "?"
         try:
@@ -273,7 +314,7 @@ def main():
         total_score += weight
 
         label = f"[{i+1:>{len(str(n))}}/{n}] {prob['type']:<20} L{level_num}"
-        print(f"  {label}  ", end="", flush=True)
+        detail = f"  {label}  "
 
         b_ans, b_ok = None, False
         rf_ans, rf_ok, rounds, used = None, False, 0, False
@@ -297,7 +338,7 @@ def main():
                     if b_ok:
                         baseline_score += weight
                 except Exception as e:
-                    print(f"B:ERR({e}) ", end="")
+                    detail += f"B:ERR({e}) "
 
                 try:
                     rf_resp, rounds, used = rf_future.result()
@@ -309,7 +350,7 @@ def main():
                     delegation_count += used
                     total_rounds += rounds
                 except Exception as e:
-                    print(f"RF:ERR({e}) ", end="")
+                    detail += f"RF:ERR({e}) "
         else:
             try:
                 rf_resp, rounds, used = run_reasonforge(
@@ -323,7 +364,7 @@ def main():
                 delegation_count += used
                 total_rounds += rounds
             except Exception as e:
-                print(f"RF:ERR({e}) ", end="")
+                detail += f"RF:ERR({e}) "
 
         status = ""
         if not args.skip_baseline:
@@ -340,9 +381,14 @@ def main():
         dt = time.time() - t0
         status += f"  Time taken: {dt:.1f}s"
 
-        print(status)
+        detail += status
+        tqdm.write(detail)
 
-        results.append({
+        done_so_far = len(done_indices) + len(results) - len(prior) + 1
+        rf_pct = rf_correct / done_so_far if done_so_far else 0
+        pbar.set_postfix(rf=f"{rf_pct:.0%}", refresh=True)
+
+        record = {
             "index": i,
             "type": prob["type"],
             "level": prob["level"],
@@ -355,7 +401,9 @@ def main():
             "rf_rounds": rounds,
             "rf_used_tools": used,
             "weight": weight,
-        })
+        }
+        results.append(record)
+        _append_checkpoint(checkpoint_file, record)
 
     print(f"\n{'-' * 56}")
     print(f"  Results — {args.model} — {n} problems")
@@ -418,10 +466,8 @@ def main():
                 line += f"  ({'+' if delta_t > 0 else ''}{delta_t:.0%})"
         print(line)
 
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     ts = time.strftime("%Y%m%d_%H%M%S")
-    model_safe = args.model.replace(":", "_").replace("/", "_")
-    out_file = RESULTS_DIR / f"{model_safe}_{ts}.json"
+    out_file = results_dir / f"{model_safe}_{ts}.json"
 
     report = {
         "model": args.model,
@@ -440,6 +486,7 @@ def main():
         json.dump(report, f, indent=2, ensure_ascii=False)
 
     print(f"\n  Results → {out_file}")
+    print(f"  Checkpoint → {checkpoint_file}")
     print(f"{'-' * 56}\n")
 
 

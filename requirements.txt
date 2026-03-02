@@ -5,7 +5,7 @@
 #   pip install .[benchmark]   (core + benchmark deps)
 #
 # Base dependencies:
-#   requests>=2.31.0
+#   requests
 #   gradio>=6.0
-#   sympy>=1.13.0
-#   mcp[cli]>=1.26.0
+#   sympy
+#   mcp[cli]

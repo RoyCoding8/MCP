@@ -13,6 +13,8 @@ import textwrap
 import time
 from pathlib import Path
 
+from tqdm import tqdm
+
 from core import EXPERTS, MAX_ROUNDS, llm_request
 
 CACHE_DIR = Path(__file__).resolve().parent / ".cache"
@@ -245,6 +247,24 @@ def run_reasonforge(
 
 
 
+def _load_checkpoint(path):
+    """Load completed results from a JSONL checkpoint file."""
+    results = []
+    if path.exists():
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    results.append(json.loads(line))
+    return results
+
+
+def _append_checkpoint(path, record):
+    """Append a single result to a JSONL checkpoint file."""
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="ReasonForge A/B Code Benchmark (HumanEval)"
@@ -282,6 +302,12 @@ def main():
         action="store_true",
         help="Enable thinking mode (for models that support it).",
     )
+    parser.add_argument(
+        "--results-dir",
+        type=str,
+        default=None,
+        help="Persistent results directory (e.g. Google Drive). Enables checkpoint/resume.",
+    )
     args = parser.parse_args()
 
     print(f"\n{'-' * 56}")
@@ -291,19 +317,34 @@ def main():
 
     problems = download_humaneval(args.n, args.seed)
     n = len(problems)
+
+    results_dir = Path(args.results_dir) if args.results_dir else RESULTS_DIR
+    results_dir.mkdir(parents=True, exist_ok=True)
+    model_safe = args.model.replace(":", "_").replace("/", "_")
+    checkpoint_file = results_dir / f"code_{model_safe}_s{args.seed}.jsonl"
+
+    prior = _load_checkpoint(checkpoint_file)
+    done_ids = {r["task_id"] for r in prior}
+    results = list(prior)
+    if done_ids:
+        print(f"  Resuming: {len(done_ids)}/{n} already completed")
     print(f"  Evaluating {n} problems\n")
 
-    baseline_pass = 0
-    rf_pass = 0
-    delegation_count = 0
-    total_rounds = 0
-    results = []
+    baseline_pass = sum(1 for r in prior if r.get("baseline_passed"))
+    rf_pass = sum(1 for r in prior if r.get("rf_passed"))
+    delegation_count = sum(1 for r in prior if r.get("rf_used_tools"))
+    total_rounds = sum(r.get("rf_rounds", 0) for r in prior)
     t_start = time.time()
 
-    for i, prob in enumerate(problems):
+    remaining = [(i, p) for i, p in enumerate(problems) if p["task_id"] not in done_ids]
+    pbar = tqdm(remaining, desc=args.model, unit="prob",
+                initial=len(done_ids), total=n)
+
+    for i, prob in pbar:
         task_id = prob["task_id"]
+
         label = f"[{i+1:>{len(str(n))}}/{n}] {task_id}"
-        print(f"  {label}  ", end="", flush=True)
+        detail = f"  {label}  "
 
         b_ok = False
         rf_ok = False
@@ -328,7 +369,7 @@ def main():
                     b_ok = b_result["passed"]
                     baseline_pass += b_ok
                 except Exception as e:
-                    print(f"B:ERR({e}) ", end="")
+                    detail += f"B:ERR({e}) "
 
                 try:
                     rf_resp, rounds, used = rf_future.result()
@@ -339,7 +380,7 @@ def main():
                     delegation_count += used
                     total_rounds += rounds
                 except Exception as e:
-                    print(f"RF:ERR({e}) ", end="")
+                    detail += f"RF:ERR({e}) "
         else:
             try:
                 rf_resp, rounds, used = run_reasonforge(
@@ -352,7 +393,7 @@ def main():
                 delegation_count += used
                 total_rounds += rounds
             except Exception as e:
-                print(f"RF:ERR({e}) ", end="")
+                detail += f"RF:ERR({e}) "
 
         status = ""
         if not args.skip_baseline:
@@ -370,18 +411,23 @@ def main():
         elapsed = time.time() - t_start
         status += f"  {dt:.1f}s  ({elapsed:.0f}s)"
 
-        print(status)
+        detail += status
+        tqdm.write(detail)
 
-        results.append(
-            {
-                "index": i,
-                "task_id": task_id,
-                "baseline_passed": b_ok,
-                "rf_passed": rf_ok,
-                "rf_rounds": rounds,
-                "rf_used_tools": used,
-            }
-        )
+        done_so_far = len(done_ids) + len(results) - len(prior) + 1
+        rf_pct = rf_pass / done_so_far if done_so_far else 0
+        pbar.set_postfix(rf=f"{rf_pct:.0%}", refresh=True)
+
+        record = {
+            "index": i,
+            "task_id": task_id,
+            "baseline_passed": b_ok,
+            "rf_passed": rf_ok,
+            "rf_rounds": rounds,
+            "rf_used_tools": used,
+        }
+        results.append(record)
+        _append_checkpoint(checkpoint_file, record)
 
 
 
@@ -423,10 +469,8 @@ def main():
 
 
 
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     ts = time.strftime("%Y%m%d_%H%M%S")
-    model_safe = args.model.replace(":", "_").replace("/", "_")
-    out_file = RESULTS_DIR / f"code_{model_safe}_{ts}.json"
+    out_file = results_dir / f"code_{model_safe}_{ts}.json"
 
     report = {
         "benchmark": "humaneval",
@@ -448,6 +492,7 @@ def main():
         json.dump(report, f, indent=2, ensure_ascii=False)
 
     print(f"\n  Results → {out_file}")
+    print(f"  Checkpoint → {checkpoint_file}")
     print(f"{'-' * 56}\n")
 
 
