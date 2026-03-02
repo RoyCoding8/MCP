@@ -1,0 +1,12 @@
+# Dependencies are managed in pyproject.toml.
+# Install with:
+#   uv sync                    (recommended)
+#   pip install .              (core deps)
+#   pip install .[benchmark]   (core + benchmark deps)
+#
+# Base dependencies:
+#   requests
+#   gradio>=6.0
+#   sympy
+#   tqdm
+#   mcp[cli]

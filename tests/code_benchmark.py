@@ -1,0 +1,533 @@
+"""ReasonForge A/B Code Benchmark — HumanEval.
+
+Compares model accuracy with vs without ReasonForge code_tool on
+the OpenAI HumanEval dataset (164 Python problems).
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+import tempfile
+import textwrap
+import time
+from pathlib import Path
+import re
+from tqdm import tqdm
+
+from core import EXPERTS, MAX_ROUNDS, llm_request
+
+CACHE_DIR = Path(__file__).resolve().parent / ".cache"
+RESULTS_DIR = Path(__file__).resolve().parent / "results"
+CODE_EXPERT = EXPERTS["Coder"]
+
+def download_humaneval(n: int, seed: int = 42) -> list[dict]:
+    """Download HumanEval from HuggingFace and cache locally."""
+    cache_file = CACHE_DIR / "humaneval.json"
+
+    if cache_file.exists():
+        with open(cache_file) as f:
+            problems = json.load(f)
+        print(f"  Loaded {len(problems)} problems from cache")
+    else:
+        try:
+            from datasets import load_dataset
+        except ImportError:
+            print("  ERROR: 'datasets' package not installed.")
+            print("  Run:  uv pip install datasets")
+            sys.exit(1)
+
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        print("  Downloading HumanEval dataset...", end="", flush=True)
+        ds = load_dataset("openai_humaneval", split="test")
+        problems = [
+            {
+                "task_id": row["task_id"],
+                "prompt": row["prompt"],
+                "canonical_solution": row["canonical_solution"],
+                "test": row["test"],
+                "entry_point": row["entry_point"],
+            }
+            for row in ds
+        ]
+        print(f" {len(problems)} problems")
+
+        with open(cache_file, "w") as f:
+            json.dump(problems, f)
+
+    import random
+    rng = random.Random(seed)
+    if n < len(problems):
+        problems = rng.sample(problems, n)
+    return problems
+
+def check_correctness(problem: dict, completion: str, timeout: int = 10) -> dict:
+    """Run generated code against HumanEval test suite in a subprocess.
+
+    Constructs: prompt + completion + test + check(entry_point)
+    Executes in isolated subprocess with timeout.
+    """
+    check_program = (
+        problem["prompt"]
+        + completion
+        + "\n"
+        + problem["test"]
+        + "\n"
+        + f"check({problem['entry_point']})"
+    )
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".py", delete=False, encoding="utf-8"
+    ) as f:
+        f.write(check_program)
+        tmp_path = f.name
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-I", "-u", tmp_path],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=tempfile.gettempdir(),
+        )
+        passed = result.returncode == 0
+        return {
+            "task_id": problem["task_id"],
+            "passed": passed,
+            "result": "passed" if passed else f"failed: {result.stderr[:200]}",
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "task_id": problem["task_id"],
+            "passed": False,
+            "result": f"timed out ({timeout}s)",
+        }
+    except Exception as e:
+        return {
+            "task_id": problem["task_id"],
+            "passed": False,
+            "result": f"error: {e}",
+        }
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+def extract_completion(response: str, prompt: str) -> str:
+    """Extract the function body from the model response.
+
+    The model should generate code that completes the function stub in `prompt`.
+    We try multiple strategies to extract a clean completion.
+    """
+    code_blocks = re.findall(r"```(?:python)?\s*\n(.*?)```", response, re.DOTALL)
+    if code_blocks:
+        code = code_blocks[-1].strip()
+        if code.startswith("def "):
+            lines = code.split("\n")
+            body_start = 1
+            for i, line in enumerate(lines):
+                if line.rstrip().endswith(":") and i == 0:
+                    body_start = 1
+                    break
+                elif line.rstrip().endswith(":"):
+                    body_start = i + 1
+                    break
+            body = "\n".join(lines[body_start:])
+            return body + "\n"
+        return code + "\n"
+
+    sig_match = re.search(r"(def \w+\(.*?\).*?:)", prompt, re.DOTALL)
+    if sig_match:
+        sig = sig_match.group(1).split("\n")[0]
+        func_name = re.search(r"def (\w+)", sig).group(1)
+        func_match = re.search(
+            rf"def {func_name}\(.*?\).*?:\s*\n(.*?)(?=\ndef |\Z)",
+            response,
+            re.DOTALL,
+        )
+        if func_match:
+            return func_match.group(1) + "\n"
+    
+    lines = response.strip().split("\n")
+    if lines and not lines[0].startswith(" ") and not lines[0].startswith("\t"):
+        response = textwrap.indent(response.strip(), "    ")
+    return response + "\n"
+
+def run_baseline(prompt: str, model: str, url: str, think: bool = True) -> str:
+    """Run a problem WITHOUT tools — baseline model completion."""
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a precise Python programmer. Complete the given function. "
+                "Output ONLY the function body (the code that goes after the def line). "
+                "Do NOT include the function signature, imports, or test code. "
+                "Wrap your code in a ```python code block."
+            ),
+        },
+        {"role": "user", "content": f"Complete this function:\n\n```python\n{prompt}```"},
+    ]
+    resp = llm_request(messages, [], model, url, stream=False, think=think)
+    return resp["message"]["content"]
+
+
+def run_reasonforge(
+    prompt: str, model: str, url: str, think: bool = True
+) -> tuple[str, int, bool]:
+    """Run a problem WITH ReasonForge code_tool — tool-augmented completion."""
+    expert = CODE_EXPERT
+    sys_prompt = (
+        expert["system"]
+        + "\n\nYou are completing a Python function. "
+        "Output ONLY the function body (the code that goes after the def line). "
+        "Use code_tool with operation='run' to test your solution before finalizing. "
+        "Use code_tool with operation='check' to verify syntax. "
+        "Wrap your final answer in a ```python code block."
+    )
+    messages = [
+        {"role": "system", "content": sys_prompt},
+        {"role": "user", "content": f"Complete this function:\n\n```python\n{prompt}```"},
+    ]
+
+    used_tools = False
+    content = ""
+    for round_num in range(1, MAX_ROUNDS + 1):
+        resp = llm_request(
+            messages, expert["tools"], model, url, stream=False, think=think
+        )
+        msg = resp["message"]
+        content = msg.get("content", "")
+        tool_calls = msg.get("tool_calls", [])
+
+        if not tool_calls:
+            return content, round_num, used_tools
+
+        used_tools = True
+        messages.append(msg)
+
+        for tc in tool_calls:
+            name = tc["function"]["name"]
+            args = tc["function"]["arguments"]
+            if isinstance(args, str):
+                args = json.loads(args)
+
+            if name in expert["dispatch"]:
+                try:
+                    result = expert["dispatch"][name](**args)
+                except Exception as e:
+                    result = {"error": f"{name} failed: {e}"}
+            else:
+                result = {"error": f"Unknown tool: {name}"}
+
+            messages.append({"role": "tool", "content": json.dumps(result)})
+
+    return content, MAX_ROUNDS, used_tools
+
+def _load_checkpoint(path):
+    """Load completed results from a JSONL checkpoint file."""
+    results = []
+    if path.exists():
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    results.append(json.loads(line))
+    return results
+
+def _append_checkpoint(path, record):
+    """Append a single result to a JSONL checkpoint file."""
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+def _timed(fn, *args, **kwargs):
+    """Run fn and return (result, elapsed_seconds)."""
+    t = time.time()
+    result = fn(*args, **kwargs)
+    return result, round(time.time() - t, 1)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="ReasonForge A/B Code Benchmark (HumanEval)"
+    )
+    parser.add_argument(
+        "--model", default="qwen3:32b", help="Ollama model name (default: qwen3:32b)"
+    )
+    parser.add_argument(
+        "--url",
+        default="http://localhost:11434/api/chat",
+        help="Ollama endpoint",
+    )
+    parser.add_argument(
+        "--n",
+        type=int,
+        default=20,
+        help="Number of problems to evaluate (default: 20, max: 164)",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed for sampling (default: 42)"
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=10,
+        help="Execution timeout per problem in seconds (default: 10)",
+    )
+    parser.add_argument(
+        "--skip-baseline",
+        action="store_true",
+        help="Skip the baseline (no-tools) run.",
+    )
+    parser.add_argument(
+        "--think",
+        action="store_true",
+        help="Enable thinking mode (for models that support it).",
+    )
+    parser.add_argument(
+        "--results-dir",
+        type=str,
+        default=None,
+        help="Persistent results directory (e.g. Google Drive). Enables checkpoint/resume.",
+    )
+    args = parser.parse_args()
+
+    print(f"  ReasonForge A/B Code Benchmark — {args.model}")
+    print(f"  {args.n} problems · seed={args.seed}")
+    print(f"{'-' * 56}\n")
+
+    problems = download_humaneval(args.n, args.seed)
+    n = len(problems)
+
+    results_dir = Path(args.results_dir) if args.results_dir else RESULTS_DIR
+    results_dir.mkdir(parents=True, exist_ok=True)
+    model_safe = args.model.replace(":", "_").replace("/", "_")
+    checkpoint_file = results_dir / f"code_{model_safe}.jsonl"
+
+    prior_all = _load_checkpoint(checkpoint_file)
+    valid = [r for r in prior_all if r.get("model") == args.model]
+    if len(valid) < len(prior_all):
+        skipped = len(prior_all) - len(valid)
+        print(f"  Skipped {skipped} checkpoint records (model mismatch)")
+        
+    done_tasks = {}
+    for r in valid:
+        if "task_id" in r:
+            done_tasks[r["task_id"]] = r
+
+    results = []
+    remaining = []
+    cached_count = 0
+
+    for i, prob in enumerate(problems):
+        task_id = prob["task_id"]
+        
+        if task_id in done_tasks:
+            cached_record = done_tasks[task_id].copy()
+            cached_record["seed"] = args.seed
+            cached_record["index"] = i
+            results.append(cached_record)
+            cached_count += 1
+        else:
+            remaining.append((i, prob))
+
+    if cached_count > 0:
+        print(f"  Resuming: {cached_count}/{n} already completed\n")
+        for r in sorted(results, key=lambda x: x["index"]):
+            label = f"[{r['index']+1:>{len(str(n))}}/{n}] {r['task_id']}"
+            status = ""
+            if r.get("baseline_passed") is not None:
+                status += f"B:{'✓' if r.get('baseline_passed') else '✗'} "
+            status += f"RF:{'✓' if r.get('rf_passed') else '✗'}"
+            if r.get("rf_used_tools"): status += " T"
+            status += f" R{r.get('rf_rounds', 0)}"
+            if r.get("baseline_time_s") is not None and r.get("rf_time_s") is not None:
+                status += f"  B:{r['baseline_time_s']:.1f}s RF:{r['rf_time_s']:.1f}s"
+            elif r.get("rf_time_s") is not None:
+                status += f"  RF:{r['rf_time_s']:.1f}s"
+            print(f"  {label}  {status}  (cached)")
+        print()
+    print(f"  Evaluating {n} problems ({cached_count} cached, {n - cached_count} remaining)\n")
+
+    baseline_pass = sum(1 for r in results if r.get("baseline_passed"))
+    rf_pass = sum(1 for r in results if r.get("rf_passed"))
+    delegation_count = sum(1 for r in results if r.get("rf_used_tools"))
+    total_rounds = sum(r.get("rf_rounds", 0) for r in results)
+    t_start = time.time()
+
+    pbar = tqdm(remaining, desc=args.model, unit="prob", initial=cached_count, total=n)
+
+    for i, prob in pbar:
+        task_id = prob["task_id"]
+
+        label = f"[{i+1:>{len(str(n))}}/{n}] {task_id}"
+        detail = f"  {label}  "
+
+        b_ok = False
+        rf_ok = False
+        rounds = 0
+        used = False
+        b_time, rf_time = None, None
+        t0 = time.time()
+
+        if not args.skip_baseline:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                b_future = pool.submit(
+                    _timed, run_baseline, prob["prompt"], args.model, args.url, think=args.think
+                )
+                rf_future = pool.submit(
+                    _timed, run_reasonforge, prob["prompt"], args.model, args.url, think=args.think
+                )
+
+                try:
+                    b_resp, b_time = b_future.result()
+                    b_completion = extract_completion(b_resp, prob["prompt"])
+                    b_result = check_correctness(prob, b_completion, timeout=args.timeout)
+                    b_ok = b_result["passed"]
+                    baseline_pass += b_ok
+                except Exception as e:
+                    detail += f"B:ERR({e}) "
+
+                try:
+                    (rf_resp, rounds, used), rf_time = rf_future.result()
+                    rf_completion = extract_completion(rf_resp, prob["prompt"])
+                    rf_result = check_correctness(prob, rf_completion, timeout=args.timeout)
+                    rf_ok = rf_result["passed"]
+                    rf_pass += rf_ok
+                    delegation_count += used
+                    total_rounds += rounds
+                except Exception as e:
+                    detail += f"RF:ERR({e}) "
+        else:
+            try:
+                (rf_resp, rounds, used), rf_time = _timed(
+                    run_reasonforge, prob["prompt"], args.model, args.url, think=args.think
+                )
+                rf_completion = extract_completion(rf_resp, prob["prompt"])
+                rf_result = check_correctness(prob, rf_completion, timeout=args.timeout)
+                rf_ok = rf_result["passed"]
+                rf_pass += rf_ok
+                delegation_count += used
+                total_rounds += rounds
+            except Exception as e:
+                detail += f"RF:ERR({e}) "
+
+        status = ""
+        if not args.skip_baseline:
+            status += f"B:{'✓' if b_ok else '✗'} "
+        status += f"RF:{'✓' if rf_ok else '✗'}"
+        if used:
+            status += " T"
+        status += f" R{rounds}"
+
+        if not args.skip_baseline and rf_ok and not b_ok:
+            status += " ★"
+        elif not args.skip_baseline and b_ok and not rf_ok:
+            status += " ▼"
+        dt = time.time() - t0
+        if b_time is not None and rf_time is not None:
+            status += f"  B:{b_time:.1f}s RF:{rf_time:.1f}s"
+        elif rf_time is not None:
+            status += f"  RF:{rf_time:.1f}s"
+        else:
+            status += f"  {dt:.1f}s"
+
+        detail += status
+        tqdm.write(detail)
+
+        done_so_far = len(results) + 1
+        rf_pct = rf_pass / done_so_far if done_so_far else 0
+        pbar.set_postfix(rf=f"{rf_pct:.0%}", refresh=True)
+
+        record = {
+            "model": args.model,
+            "task_id": task_id,
+            "baseline_passed": b_ok,
+            "rf_passed": rf_ok,
+            "rf_rounds": rounds,
+            "rf_used_tools": used,
+            "baseline_time_s": b_time,
+            "rf_time_s": rf_time,
+        }
+        results.append(record)
+        _append_checkpoint(checkpoint_file, record)
+
+
+
+    print(f"\n{'-' * 56}")
+    print(f"  Results — {args.model} — {n} problems (HumanEval)")
+    print(f"{'-' * 56}\n")
+
+    if not args.skip_baseline:
+        b_pct = baseline_pass / n if n else 0
+        r_pct = rf_pass / n if n else 0
+        delta = r_pct - b_pct
+
+        print(f"  {'':18} {'Baseline':>10}  {'ReasonForge':>12}")
+        print(f"  {'Pass@1:':18} {baseline_pass:>7}/{n}  {rf_pass:>9}/{n}")
+        print(f"  {'Accuracy:':18} {b_pct:>9.1%}  {r_pct:>11.1%}")
+        arrow = "    ▲" if delta >= 0 else "    ▼"
+        print(f"  {'':18} {'':>10}  {arrow} {delta:+.1%}")
+    else:
+        r_pct = rf_pass / n if n else 0
+        print(f"  ReasonForge Pass@1:  {rf_pass}/{n} ({r_pct:.1%})")
+
+    d_pct = delegation_count / n if n else 0
+    avg_r = total_rounds / n if n else 0
+    b_times = [r["baseline_time_s"] for r in results if r.get("baseline_time_s") is not None]
+    rf_times = [r["rf_time_s"] for r in results if r.get("rf_time_s") is not None]
+    avg_bt = sum(b_times) / len(b_times) if b_times else 0
+    avg_rt = sum(rf_times) / len(rf_times) if rf_times else 0
+    print(f"\n  Delegation:   {delegation_count}/{n} ({d_pct:.1%}) used tools")
+    print(f"  Avg Rounds:   {avg_r:.1f}")
+    if b_times:
+        print(f"  Avg Time:     B:{avg_bt:.1f}s  RF:{avg_rt:.1f}s  (Δ{avg_rt - avg_bt:+.1f}s)")
+    else:
+        print(f"  Avg Time:     RF:{avg_rt:.1f}s")
+
+    # Show which problems benefitted from tools
+    if not args.skip_baseline:
+        wins = [r for r in results if r["rf_passed"] and not r["baseline_passed"]]
+        losses = [r for r in results if r["baseline_passed"] and not r["rf_passed"]]
+        if wins:
+            print(f"\n  ★ ReasonForge wins ({len(wins)}):")
+            for r in wins:
+                print(f"{r['task_id'].split('/')[-1]}, ", end="")
+            print()
+        if losses:
+            print(f"\n  ▼ ReasonForge losses ({len(losses)}):")
+            for r in losses:
+                print(f"{r['task_id'].split('/')[-1]}, ", end="")
+            print()
+
+
+
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    out_file = results_dir / f"code_{model_safe}_{ts}.json"
+
+    report = {
+        "benchmark": "humaneval",
+        "model": args.model,
+        "n": n,
+        "seed": args.seed,
+        "timestamp": ts,
+        "baseline_pass1": baseline_pass / n if (not args.skip_baseline and n) else None,
+        "rf_pass1": rf_pass / n if n else 0,
+        "delta": (rf_pass - baseline_pass) / n
+        if (not args.skip_baseline and n)
+        else None,
+        "delegation_rate": d_pct,
+        "avg_rounds": avg_r,
+        "avg_baseline_time_s": avg_bt if b_times else None,
+        "avg_rf_time_s": avg_rt if rf_times else None,
+        "results": results,
+    }
+
+    with open(out_file, "w") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
+
+    print(f"\n  Results → {out_file}")
+    print(f"  Checkpoint → {checkpoint_file}")
+    print(f"{'-' * 56}\n")
+
+
+if __name__ == "__main__":
+    main()

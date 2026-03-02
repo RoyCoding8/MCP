@@ -1,0 +1,18 @@
+[project]
+name = "reasonforge"
+version = "0.1.0"
+description = "Deterministic math tools for small language models via MCP"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "gradio>=6.0",
+    "requests",
+    "sympy",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+benchmark = [
+    "datasets",
+    "math-verify[antlr4_13_2]",
+]
