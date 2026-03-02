@@ -331,6 +331,11 @@ def main():
     checkpoint_file = results_dir / f"code_{model_safe}_s{args.seed}.jsonl"
 
     prior = _load_checkpoint(checkpoint_file)
+    valid = [r for r in prior if r.get("model") == args.model]
+    if len(valid) < len(prior):
+        skipped = len(prior) - len(valid)
+        print(f"  ⚠ Skipped {skipped} checkpoint records (model mismatch)")
+    prior = valid
     done_ids = {r["task_id"] for r in prior}
     results = list(prior)
     if done_ids:

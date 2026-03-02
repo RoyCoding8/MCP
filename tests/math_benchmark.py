@@ -290,6 +290,12 @@ def main():
     checkpoint_file = results_dir / f"math_{model_safe}_s{args.seed}.jsonl"
 
     prior = _load_checkpoint(checkpoint_file)
+    # Filter out records from a different model (e.g. stale checkpoint)
+    valid = [r for r in prior if r.get("model") == args.model]
+    if len(valid) < len(prior):
+        skipped = len(prior) - len(valid)
+        print(f"  ⚠ Skipped {skipped} checkpoint records (model mismatch)")
+    prior = valid
     done_indices = {r["index"] for r in prior}
     results = list(prior)
     if done_indices:
