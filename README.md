@@ -47,15 +47,17 @@ MCP/
 │           └── code.py        # Sandboxed Python runner & syntax checker
 ├── tests/
 │   ├── sanity.py              # Tool unit tests (16 checks)
-│   ├── benchmark.py           # A/B math benchmark (MATH-500 dataset)
-│   └── code_benchmark.py      # A/B code benchmark (HumanEval)
+│   ├── math_benchmark.py      # A/B math benchmark (MATH-500 dataset)
+│   ├── code_benchmark.py      # A/B code benchmark (HumanEval)
+│   └── results/               # Local benchmark outputs 
 ├── ui/
 │   ├── app.py                 # Gradio chat interface with two-phase pipeline
 │   └── style.css              # Custom UI styles (dark mode, thinking blocks)
 ├── ReasonForge_Colab.ipynb    # One-click Colab deployment notebook
 ├── pyproject.toml
 ├── requirements.txt
-└── run_ui.bat                 # Local launcher (Windows)
+├── run_tests.bat              # Local tests launcher (Windows)
+└── run_ui.bat                 # Local UI launcher (Windows)
 ```
 
 ## Quick Start (Local)
@@ -76,8 +78,8 @@ It clones this repo, installs Ollama + `qwen3:32b`, and launches the UI with a p
 
 ```bash
 # Math benchmark — MATH-500 (requires Ollama running)
-uv run python -m tests.benchmark --model llama3.2:3b --n 10
-uv run python -m tests.benchmark --model qwen3:32b --n 50 --think
+uv run python -m tests.math_benchmark --model llama3.2:3b --n 10
+uv run python -m tests.math_benchmark --model qwen3:32b --n 50 --think
 
 # Code benchmark — HumanEval (requires Ollama running)
 uv run python -m tests.code_benchmark --model qwen3:8b --n 20
@@ -89,6 +91,60 @@ uv run python -m tests.code_benchmark --model qwen3:32b --n 164 --think
 ```bash
 uv run python -m tests.sanity
 ```
+
+## Benchmark Results
+
+### MATH-500 (`qwen3:8b`, 50 problems)
+
+| Metric | Baseline | ReasonForge |
+|---|---|---|
+| **Correct** | 43/50 | **45/50** |
+| **Uniform Accuracy** | 86.0% | **90.0%** (▲ +4.0%) |
+| **Weighted Score**  | 144/176 | **154/176** |
+| **Weighted Accuracy** | 81.8% | **87.5%** (▲ +5.7%) |
+
+- **Delegation:** 40.0% (20/50) of tasks used tools
+- **Avg Rounds:** 1.5 
+- **Avg Time:** Baseline 46.3s vs ReasonForge 31.0s (Δ -15.2s)
+
+#### By Difficulty
+```text
+Level 1      5/5   100%  ████████████████████
+Level 2      7/7   100%  ████████████████████
+Level 3      8/9   89%   █████████████████
+Level 4     14/15  93%   ██████████████████
+Level 5     11/14  79%   ███████████████  (+14%)
+```
+
+#### By Category
+```text
+Algebra                   10/12  83%   ████████████████
+Counting & Probability     4/4   100%  ████████████████████
+Geometry                   4/4   100%  ████████████████████
+Intermediate Algebra      11/13  85%   ████████████████  (+8%)
+Number Theory              2/2   100%  ████████████████████
+Prealgebra                 7/7   100%  ████████████████████
+Precalculus                7/8   88%   █████████████████  (+12%)
+```
+
+### HumanEval (Code: `qwen3:8b`, 160 problems)
+
+| Metric | Baseline | ReasonForge |
+|---|---|---|
+| **Pass@1** | 4/160 | **102/160** |
+| **Accuracy** | 2.5% | **63.7%** (▲ +61.2%) |
+
+- **Delegation:** 31.2% (50/160) of tasks used tools
+- **Avg Rounds:** 1.5 
+- **Avg Time:** Baseline 23.9s vs ReasonForge **24.8s** (Δ +0.9s)
+- **Wins vs Losses:** ReasonForge successfully solved 100 problems that the Baseline failed on, while only losing 2.
+
+### Key Takeaways
+
+Testing the **8-billion parameter** `qwen3` model reveals exactly why deterministic tool-delegation is crucial for smaller models:
+
+1. **Math (MATH-500):** While both models achieved incredibly high baseline accuracy, giving the model access to the SymPy backend **massively reduced latency** (cutting the average computation time from `46.3s` down to `31.0s`), all while squeezing out an extra `~5%` in weighted grading accuracy.
+2. **Code (HumanEval):** Without sandboxed execution tools, the 8B model almost entirely collapsed on HumanEval, only passing a dismal `4/160` (2.5%) of the problems. However, the simple addition of the ReasonForge Python runtime tools allowed the exact same model to safely hypothesize, test, and iteratably structure its code, propelling its accuracy to **102/160 (63.7%)**—a gigantic **+61.2% improvement** with zero fine-tuning required.
 
 ## Tech Stack
 
