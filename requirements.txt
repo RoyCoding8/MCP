@@ -8,4 +8,5 @@
 #   requests
 #   gradio>=6.0
 #   sympy
+#   tqdm
 #   mcp[cli]
