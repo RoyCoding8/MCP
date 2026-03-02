@@ -416,6 +416,8 @@ def main():
         pbar.set_postfix(rf=f"{rf_pct:.0%}", refresh=True)
 
         record = {
+            "model": args.model,
+            "seed": args.seed,
             "index": i,
             "type": prob["type"],
             "level": prob["level"],
@@ -514,6 +516,9 @@ def main():
         "baseline_accuracy": baseline_correct / n if (not args.skip_baseline and n) else None,
         "rf_accuracy": rf_correct / n if n else 0,
         "delta": (rf_correct - baseline_correct) / n if (not args.skip_baseline and n) else None,
+        "baseline_weighted_accuracy": b_score_pct if not args.skip_baseline else None,
+        "rf_weighted_accuracy": r_score_pct,
+        "weighted_delta": score_delta if not args.skip_baseline else None,
         "delegation_rate": d_pct,
         "avg_rounds": avg_r,
         "avg_baseline_time_s": avg_bt if b_times else None,

@@ -446,6 +446,8 @@ def main():
         pbar.set_postfix(rf=f"{rf_pct:.0%}", refresh=True)
 
         record = {
+            "model": args.model,
+            "seed": args.seed,
             "index": i,
             "task_id": task_id,
             "baseline_passed": b_ok,
