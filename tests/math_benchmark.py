@@ -277,7 +277,6 @@ def main():
         help="Persistent results directory (e.g. Google Drive). Enables checkpoint/resume.",
     )
     args = parser.parse_args()
-    print(f"\n{'-' * 56}")
     print(f"  ReasonForge A/B Benchmark — {args.model}")
     print(f"  {args.n} problems · seed={args.seed}")
     print(f"{'-' * 56}\n")
@@ -294,8 +293,23 @@ def main():
     done_indices = {r["index"] for r in prior}
     results = list(prior)
     if done_indices:
-        print(f"  Resuming: {len(done_indices)}/{n} already completed")
-    print(f"  Evaluating {n} problems\n")
+        print(f"  Resuming: {len(done_indices)}/{n} already completed\n")
+        for r in sorted(prior, key=lambda x: x["index"]):
+            lvl = r.get("level", "").replace("Level ", "") if r.get("level") else "?"
+            label = f"[{r['index']+1:>{len(str(n))}}/{n}] {r.get('type',''):<20} L{lvl}"
+            status = ""
+            if r.get("baseline_answer") is not None or r.get("baseline_correct"):
+                status += f"B:{'✓' if r.get('baseline_correct') else '✗'} "
+            status += f"RF:{'✓' if r.get('rf_correct') else '✗'}"
+            if r.get("rf_used_tools"): status += " T"
+            status += f" R{r.get('rf_rounds', 0)}"
+            if r.get("baseline_time_s") is not None and r.get("rf_time_s") is not None:
+                status += f"  B:{r['baseline_time_s']:.1f}s RF:{r['rf_time_s']:.1f}s"
+            elif r.get("rf_time_s") is not None:
+                status += f"  RF:{r['rf_time_s']:.1f}s"
+            print(f"  {label}  {status}  (cached)")
+        print()
+    print(f"  Evaluating {n} problems ({len(done_indices)} cached, {n - len(done_indices)} remaining)\n")
 
     baseline_correct = sum(1 for r in prior if r.get("baseline_correct"))
     rf_correct = sum(1 for r in prior if r.get("rf_correct"))

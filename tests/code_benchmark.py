@@ -334,8 +334,22 @@ def main():
     done_ids = {r["task_id"] for r in prior}
     results = list(prior)
     if done_ids:
-        print(f"  Resuming: {len(done_ids)}/{n} already completed")
-    print(f"  Evaluating {n} problems\n")
+        print(f"  Resuming: {len(done_ids)}/{n} already completed\n")
+        for r in sorted(prior, key=lambda x: x["index"]):
+            label = f"[{r['index']+1:>{len(str(n))}}/{n}] {r['task_id']}"
+            status = ""
+            if r.get("baseline_passed") is not None:
+                status += f"B:{'✓' if r.get('baseline_passed') else '✗'} "
+            status += f"RF:{'✓' if r.get('rf_passed') else '✗'}"
+            if r.get("rf_used_tools"): status += " T"
+            status += f" R{r.get('rf_rounds', 0)}"
+            if r.get("baseline_time_s") is not None and r.get("rf_time_s") is not None:
+                status += f"  B:{r['baseline_time_s']:.1f}s RF:{r['rf_time_s']:.1f}s"
+            elif r.get("rf_time_s") is not None:
+                status += f"  RF:{r['rf_time_s']:.1f}s"
+            print(f"  {label}  {status}  (cached)")
+        print()
+    print(f"  Evaluating {n} problems ({len(done_ids)} cached, {n - len(done_ids)} remaining)\n")
 
     baseline_pass = sum(1 for r in prior if r.get("baseline_passed"))
     rf_pass = sum(1 for r in prior if r.get("rf_passed"))

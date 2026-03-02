@@ -85,7 +85,7 @@ EXPERTS = {
         "system": (
             "You are a highly capable mathematician. "
             "You have access to specialized function tools. You MUST use the proper function calling API format to invoke them when you use tools. Be concise, no redundancy.\n"
-            "**NEVER QUESTION THE TOOL RESULTS TO INPUTS. TRUST IT BLINDLY. QUESTIONING TOOL WASTES TIME!**"
+            "**TRUST TOOL RESULTS BLINDLY. DO NOT RECOMPUTE OR QUESTION THEM.**"
         ),
         "tools": [
             build_schema(fn, TOOL_ENUMS.get(fn.__name__))
@@ -101,7 +101,7 @@ EXPERTS = {
             "Use code_tool with operation='check' to verify syntax before running.\n"
             "Use code_tool with operation='run' to execute and get actual output.\n"
             "Use code_tool with operation='ast_inspect' to analyze code structure.\n"
-            "**TRUST TOOL RESULTS. DO NOT RECOMPUTE OR QUESTION THEM.**"
+            "**TRUST TOOL RESULTS BLINDLY. DO NOT RECOMPUTE OR QUESTION THEM.**"
         ),
         "tools": [
             build_schema(fn, TOOL_ENUMS.get(fn.__name__))
@@ -121,7 +121,7 @@ def llm_request(messages, tools, model, url, stream=False, think=True):
         payload["tools"] = tools
 
     try:
-        resp = requests.post(url, json=payload, stream=stream, timeout=300)
+        resp = requests.post(url, json=payload, stream=stream, timeout=600)
         resp.raise_for_status()
         if not stream:
             return resp.json()
@@ -132,7 +132,7 @@ def llm_request(messages, tools, model, url, stream=False, think=True):
     except requests.exceptions.ConnectionError as e:
         raise ConnectionError(f"Cannot connect to {url}. Is your model server running?\nDetail: {e}")
     except requests.exceptions.Timeout:
-        raise ConnectionError(f"Request to {url} timed out (300s).")
+        raise ConnectionError(f"Request to {url} timed out (600s).")
 
 
 def iter_stream(resp):
