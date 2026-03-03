@@ -13,9 +13,10 @@ Instead of relying on the model to compute, all math is delegated to determinist
 User Question → LLM (Qwen3) → Tool Calls → SymPy Backend → Verified Results → LLM → Final Answer
 ```
 
-**Two-phase response pipeline:**
-1. **Compute** (`/no_think`): Model calls tools with thinking disabled — forced delegation
-2. **Present** (thinking ON): Model reasons about verified results, composes the answer
+**Multi-Turn Agentic Loop:**
+1. **Reason:** The model uses `<think>` tags to analyze the problem and decide on a strategy.
+2. **Execute:** The model delegates computation to a deterministic tool (SymPy or Python sandbox).
+3. **Iterate:** The model observes the verified tool output and either concludes the answer or calls another tool until solved (up to `MAX_ROUNDS`).
 
 ## Tools
 
@@ -51,7 +52,7 @@ MCP/
 │   ├── code_benchmark.py      # A/B code benchmark (HumanEval)
 │   └── results/               # Local benchmark outputs 
 ├── ui/
-│   ├── app.py                 # Gradio chat interface with two-phase pipeline
+│   ├── app.py                 # Gradio chat interface with intermediate thinking steps
 │   └── style.css              # Custom UI styles (dark mode, thinking blocks)
 ├── ReasonForge_Colab.ipynb    # One-click Colab deployment notebook
 ├── pyproject.toml
