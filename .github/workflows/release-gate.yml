@@ -1,0 +1,36 @@
+name: Release Gate
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  RF_CODE_TOOL_ISOLATION: process
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  release-gate:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Show Python version
+        run: python --version
+
+      - name: Run release gate
+        run: python -m tests.release_gate

@@ -3,7 +3,10 @@
 import inspect
 import json
 import typing
+from json import JSONDecodeError
+
 import requests
+from endpoint_policy import validate_endpoint_url
 
 from experts.math.tools.algebra import math_tool, OPERATIONS as MATH_OPS, DOMAINS
 from experts.math.tools.calculus import calculus_tool, OPERATIONS as CALC_OPS
@@ -14,7 +17,6 @@ from experts.code.tools.code import code_tool, OPERATIONS as CODE_OPS
 DEFAULT_MODEL = "qwen3:32b"
 DEFAULT_URL = "http://localhost:11434/api/chat"
 MAX_ROUNDS = 5
-
 
 
 _PY_TO_JSON = {str: "string", int: "integer", float: "number", bool: "boolean"}
@@ -75,8 +77,6 @@ def build_schema(fn, enums=None):
     }
 
 
-
-
 _MATH_TOOLS = [math_tool, calculus_tool, matrix_tool, statistics_tool]
 _CODE_TOOLS = [code_tool]
 
@@ -87,10 +87,7 @@ EXPERTS = {
             "You have access to specialized function tools. You MUST use the proper function calling API format to invoke them when you use tools. Be concise, no redundancy.\n"
             "**TRUST TOOL RESULTS BLINDLY. DO NOT RECOMPUTE OR QUESTION THEM.**"
         ),
-        "tools": [
-            build_schema(fn, TOOL_ENUMS.get(fn.__name__))
-            for fn in _MATH_TOOLS
-        ],
+        "tools": [build_schema(fn, TOOL_ENUMS.get(fn.__name__)) for fn in _MATH_TOOLS],
         "dispatch": {fn.__name__: fn for fn in _MATH_TOOLS},
     },
     "Coder": {
@@ -103,19 +100,19 @@ EXPERTS = {
             "Use code_tool with operation='ast_inspect' to analyze code structure.\n"
             "**TRUST TOOL RESULTS BLINDLY. DO NOT RECOMPUTE OR QUESTION THEM.**"
         ),
-        "tools": [
-            build_schema(fn, TOOL_ENUMS.get(fn.__name__))
-            for fn in _CODE_TOOLS
-        ],
+        "tools": [build_schema(fn, TOOL_ENUMS.get(fn.__name__)) for fn in _CODE_TOOLS],
         "dispatch": {fn.__name__: fn for fn in _CODE_TOOLS},
     },
 }
 
 
-
-
 def llm_request(messages, tools, model, url, stream=False, think=True):
     """Send a chat request to Ollama. Returns parsed JSON or raw response for streaming."""
+    try:
+        url = validate_endpoint_url(url)
+    except ValueError as e:
+        raise ConnectionError(str(e))
+
     payload = {"model": model, "messages": messages, "stream": stream, "think": think}
     if tools:
         payload["tools"] = tools
@@ -130,7 +127,9 @@ def llm_request(messages, tools, model, url, stream=False, think=True):
         body = e.response.text[:500]
         raise ConnectionError(f"HTTP {e.response.status_code} from {url}\n{body}")
     except requests.exceptions.ConnectionError as e:
-        raise ConnectionError(f"Cannot connect to {url}. Is your model server running?\nDetail: {e}")
+        raise ConnectionError(
+            f"Cannot connect to {url}. Is your model server running?\nDetail: {e}"
+        )
     except requests.exceptions.Timeout:
         raise ConnectionError(f"Request to {url} timed out (600s).")
 
@@ -142,7 +141,10 @@ def iter_stream(resp):
             if not raw_line:
                 continue
             line = raw_line.decode("utf-8", errors="replace").strip()
-            chunk = json.loads(line)
+            try:
+                chunk = json.loads(line)
+            except JSONDecodeError:
+                continue
             msg = chunk.get("message", {})
             yield (
                 msg.get("content", ""),
@@ -166,7 +168,10 @@ def stream_to_msg(resp):
             if not raw_line:
                 continue
             line = raw_line.decode("utf-8", errors="replace").strip()
-            chunk = json.loads(line)
+            try:
+                chunk = json.loads(line)
+            except JSONDecodeError:
+                continue
             msg = chunk.get("message", {})
             content += msg.get("content", "")
             if msg.get("tool_calls"):

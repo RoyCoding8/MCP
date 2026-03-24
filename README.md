@@ -70,6 +70,33 @@ uv run python -m ui.app
 # Open at http://localhost:7861
 ```
 
+### Endpoint Defaults (Basic Robustness)
+
+- Outbound model endpoints default to localhost-only.
+- Allow remote endpoints explicitly with `RF_ALLOW_REMOTE_ENDPOINTS=1`.
+- Extend allowed hosts with `RF_ENDPOINT_ALLOWLIST`.
+
+Examples:
+
+```bash
+export RF_ENDPOINT_ALLOWLIST="localhost,127.0.0.1,::1,api.mycompany.com"
+export RF_ALLOW_REMOTE_ENDPOINTS=1
+```
+
+### Code Tool Docker Option (Basic Sandbox)
+
+`code_tool` supports optional Docker isolation with safe fallback:
+
+- `RF_CODE_TOOL_ISOLATION=auto` (default): use Docker if available, else process mode
+- `RF_CODE_TOOL_ISOLATION=docker`: prefer Docker, fallback to process if unavailable
+- `RF_CODE_TOOL_ISOLATION=process`: force process mode
+
+Optional image override:
+
+```bash
+export RF_CODE_TOOL_DOCKER_IMAGE=python:3.11-alpine
+```
+
 ## Colab Deployment (GPU)
 
 Open `ReasonForge_Colab.ipynb` in Google Colab Pro with an A100 GPU.
@@ -91,6 +118,18 @@ uv run python -m tests.code_benchmark --model qwen3:32b --n 164 --think
 
 ```bash
 uv run python -m tests.sanity
+```
+
+## Running All Unit Tests
+
+```bash
+uv run python -m tests.test_all
+```
+
+## Running Release Gate
+
+```bash
+uv run python -m tests.release_gate
 ```
 
 ## Benchmark Results
